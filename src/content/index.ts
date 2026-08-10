@@ -18,10 +18,21 @@ import {
 } from "../shared/settings";
 import { HeadingHighlighter } from "./highlighter";
 import {
+  constrainPanelAnchorLeft,
+  getResizedPanelWidth,
+  normalizePanelExpandDirection,
+  type PanelExpandDirection
+} from "./panel-layout";
+import {
   PanelDisclosureController,
   type PanelMode,
   type PanelPresentation
 } from "./panel-state";
+import {
+  createPanelShell,
+  getAnswerChevronIcon,
+  syncPanelDirectionControls
+} from "./panel-shell";
 import { getRailMarkers } from "./rail";
 
 const ROOT_ID = "gpt-reader-root";
@@ -38,6 +49,8 @@ const UI_STORAGE_KEY = "gptReaderUiState";
 const DEFAULT_PANEL_WIDTH = 296;
 const MIN_PANEL_WIDTH = 260;
 const MAX_PANEL_WIDTH = 440;
+const COLLAPSED_RAIL_WIDTH = 32;
+const PANEL_EDGE_MARGIN = 8;
 const DEFAULT_PANEL_HEIGHT = 680;
 const MIN_PANEL_HEIGHT = 320;
 const SCAN_DEBOUNCE_MS = 120;
@@ -56,6 +69,7 @@ type PanelUiState = {
   height?: number;
   position?: PanelPosition | null;
   mode?: PanelMode;
+  expandDirection?: PanelExpandDirection;
 };
 
 type ConversationRound = {
@@ -108,6 +122,7 @@ class ChatGptReader {
   private isDragging = false;
   private suppressActiveSyncUntil = 0;
   private panelMode: PanelMode = "expanded";
+  private panelExpandDirection: PanelExpandDirection = "right";
   private panelDisclosure: PanelDisclosureController | null = null;
   private readonly headingHighlighter = new HeadingHighlighter();
   private unsubscribeSettings: (() => void) | null = null;
@@ -140,7 +155,7 @@ class ChatGptReader {
 
   private ensureShell(): void {
     const existing = document.getElementById(ROOT_ID);
-    if (existing) {
+    if (existing?.querySelector("[data-gpt-reader-direction]")) {
       this.root = existing;
       this.list = existing.querySelector<HTMLElement>("[data-gpt-reader-list]");
       this.activeDot = existing.querySelector<HTMLElement>("[data-gpt-reader-active-dot]");
@@ -149,65 +164,14 @@ class ChatGptReader {
       );
       this.applyPanelWidth();
       this.applyPanelHeight();
+      this.applyPanelDirection();
       this.applyPanelPosition();
       this.applyPanelPresentation();
       return;
     }
 
-    const root = document.createElement("aside");
-    root.id = ROOT_ID;
-    root.innerHTML = `
-      <section class="gpt-reader-panel" aria-label="ChatGPT 回答目录">
-        <header class="gpt-reader-header">
-          <div>
-            <strong>回答目录</strong>
-            <span data-gpt-reader-count>等待标题</span>
-          </div>
-          <div class="gpt-reader-header-actions">
-            <button type="button" class="gpt-reader-icon-button" data-gpt-reader-collapse title="收起目录">收起</button>
-            <button type="button" class="gpt-reader-icon-button" data-gpt-reader-settings-toggle aria-expanded="false">设置</button>
-          </div>
-        </header>
-        <form class="gpt-reader-settings" data-gpt-reader-settings hidden>
-          <label class="gpt-reader-switch">
-            <input type="checkbox" data-gpt-reader-enabled />
-            <span>启用目录</span>
-          </label>
-          <div class="gpt-reader-field">
-            <span>目录最大层级</span>
-            <div class="gpt-reader-depths" data-gpt-reader-depths></div>
-          </div>
-          <label class="gpt-reader-switch">
-            <input type="checkbox" data-gpt-reader-expand-current />
-            <span>只展开当前回答</span>
-          </label>
-          <label class="gpt-reader-field">
-            <span>保留最近问答轮数</span>
-            <input type="number" min="0" max="50" step="1" data-gpt-reader-max-rounds />
-            <p>0 表示不限制；长会话建议 3-5 轮。</p>
-          </label>
-          <p>其他回答默认折叠，可点击回答标题展开。</p>
-          <p>悬浮展开和正文高亮可在扩展图标弹窗中设置。</p>
-        </form>
-        <div class="gpt-reader-body">
-          <div class="gpt-reader-rail" aria-hidden="true">
-            <span data-gpt-reader-active-dot></span>
-          </div>
-          <nav data-gpt-reader-list></nav>
-        </div>
-        <div class="gpt-reader-resize-handle" data-gpt-reader-resize title="拖拽调整目录宽度" aria-hidden="true"></div>
-        <div class="gpt-reader-resize-height-handle" data-gpt-reader-resize-height title="拖拽调整目录高度" aria-hidden="true"></div>
-      </section>
-      <button
-        type="button"
-        class="gpt-reader-collapsed-rail"
-        data-gpt-reader-collapsed-rail
-        aria-label="展开 ChatGPT 回答目录"
-        aria-expanded="false"
-      >
-        <span class="gpt-reader-collapsed-markers" data-gpt-reader-collapsed-markers aria-hidden="true"></span>
-      </button>
-    `;
+    existing?.remove();
+    const root = createPanelShell();
 
     document.body.append(root);
     this.root = root;
@@ -218,6 +182,7 @@ class ChatGptReader {
     );
     this.applyPanelWidth();
     this.applyPanelHeight();
+    this.applyPanelDirection();
     this.applyPanelPosition();
     this.applyPanelPresentation();
   }
@@ -238,10 +203,10 @@ class ChatGptReader {
         return;
       }
       event.preventDefault();
-      this.panelDisclosure.escape();
       this.root
         ?.querySelector<HTMLButtonElement>("[data-gpt-reader-collapsed-rail]")
-        ?.focus();
+        ?.focus({ preventScroll: true });
+      this.panelDisclosure.escape();
     });
 
     this.root?.addEventListener("pointerdown", (event) => {
@@ -254,7 +219,7 @@ class ChatGptReader {
       if (
         this.panelDisclosure?.presentation === "peek" &&
         target.closest(
-          ".gpt-reader-header, .gpt-reader-settings, [data-gpt-reader-resize], [data-gpt-reader-resize-height]"
+          ".gpt-reader-header, .gpt-reader-settings, [data-gpt-reader-direction], [data-gpt-reader-resize], [data-gpt-reader-resize-height]"
         )
       ) {
         this.panelDisclosure.promote();
@@ -271,8 +236,8 @@ class ChatGptReader {
       }
 
       if (
-        target.closest(".gpt-reader-header") &&
-        !target.closest("button, input, label, [data-gpt-reader-settings-toggle]")
+        target.closest("[data-gpt-reader-drag]") &&
+        !target.closest("button, input, label")
       ) {
         this.startDrag(event);
       }
@@ -305,6 +270,11 @@ class ChatGptReader {
 
       if (target.closest("[data-gpt-reader-settings-toggle]")) {
         this.toggleSettings();
+        return;
+      }
+
+      if (target.closest("[data-gpt-reader-direction]")) {
+        this.togglePanelExpandDirection();
         return;
       }
 
@@ -504,6 +474,7 @@ class ChatGptReader {
     }
 
     this.root.classList.toggle("is-disabled", !this.settings.enabled);
+    this.applyPanelDirection();
     this.applyPanelPresentation();
     this.root
       .querySelector<HTMLInputElement>("[data-gpt-reader-enabled]")
@@ -527,12 +498,6 @@ class ChatGptReader {
     );
     if (maxRoundsInput) {
       maxRoundsInput.value = String(this.settings.maxVisibleRounds);
-    }
-
-    const count = this.root.querySelector<HTMLElement>("[data-gpt-reader-count]");
-    if (count) {
-      const headingCount = this.allHeadings.length;
-      count.textContent = headingCount > 0 ? `${headingCount} 个标题` : "未检测到标题";
     }
 
     this.renderDepthButtons();
@@ -658,7 +623,7 @@ class ChatGptReader {
       header.classList.toggle("is-collapsed", !isExpanded);
       header.innerHTML = `
         <button type="button" data-gpt-reader-answer-toggle data-gpt-reader-answer-id="${escapeText(outline.id)}" aria-expanded="${isExpanded}">
-          <span class="gpt-reader-answer-caret" aria-hidden="true">${isExpanded ? "v" : ">"}</span>
+          <span class="gpt-reader-answer-caret" aria-hidden="true">${getAnswerChevronIcon(isExpanded)}</span>
           <span>${escapeText(`回答 ${outlineIndex + 1}`)}</span>
         </button>
         ${isCurrentAnswer ? "<em>当前</em>" : ""}
@@ -1055,6 +1020,7 @@ class ChatGptReader {
 
   private async loadPanelUiState(): Promise<void> {
     const storedState = await this.readStoredPanelUiState();
+    this.panelExpandDirection = normalizePanelExpandDirection(storedState.expandDirection);
     const legacyWidth = this.readStoredNumber(window.localStorage.getItem(WIDTH_STORAGE_KEY));
     const legacyHeight = this.readStoredNumber(window.localStorage.getItem(HEIGHT_STORAGE_KEY));
     const legacyPosition = this.readLegacyPanelPosition();
@@ -1101,7 +1067,8 @@ class ChatGptReader {
       width: Math.round(this.panelWidth),
       height: Math.round(this.panelHeight),
       position: this.panelPosition,
-      mode: this.panelDisclosure?.persistentMode ?? this.panelMode
+      mode: this.panelDisclosure?.persistentMode ?? this.panelMode,
+      expandDirection: this.panelExpandDirection
     };
 
     window.localStorage.setItem(WIDTH_STORAGE_KEY, String(state.width));
@@ -1127,6 +1094,35 @@ class ChatGptReader {
 
   private applyPanelWidth(): void {
     this.root?.style.setProperty("--gpt-reader-width", `${this.panelWidth}px`);
+  }
+
+  private applyPanelDirection(): void {
+    if (!this.root) {
+      return;
+    }
+
+    syncPanelDirectionControls(this.root, this.panelExpandDirection);
+  }
+
+  private togglePanelExpandDirection(): void {
+    if (this.panelDisclosure?.presentation === "peek") {
+      this.panelDisclosure.promote();
+    }
+
+    this.panelExpandDirection = this.panelExpandDirection === "right" ? "left" : "right";
+    if (!this.panelPosition && this.root) {
+      const rect = this.root.getBoundingClientRect();
+      this.panelPosition = { left: rect.left, top: rect.top };
+    }
+    if (this.panelPosition) {
+      this.panelPosition = this.constrainPanelPosition(
+        this.panelPosition.left,
+        this.panelPosition.top
+      );
+    }
+    this.applyPanelDirection();
+    this.applyPanelPosition();
+    void this.savePanelUiState();
   }
 
   private constrainPanelHeight(height: number): number {
@@ -1160,7 +1156,16 @@ class ChatGptReader {
   }
 
   private applyPanelPosition(): void {
-    if (!this.root || !this.panelPosition) {
+    if (!this.root) {
+      return;
+    }
+
+    if (!this.panelPosition && this.panelExpandDirection === "left") {
+      const rect = this.root.getBoundingClientRect();
+      this.panelPosition = this.constrainPanelPosition(rect.left, rect.top);
+    }
+
+    if (!this.panelPosition) {
       return;
     }
 
@@ -1171,14 +1176,22 @@ class ChatGptReader {
   }
 
   private constrainPanelPosition(left: number, top: number): PanelPosition {
-    const width = this.panelWidth;
     const panelHeight = this.panelHeight;
-    const maxLeft = Math.max(0, window.innerWidth - Math.min(width, window.innerWidth) - 8);
-    const maxTop = Math.max(0, window.innerHeight - Math.min(panelHeight, window.innerHeight) - 8);
+    const maxTop = Math.max(
+      PANEL_EDGE_MARGIN,
+      window.innerHeight - Math.min(panelHeight, window.innerHeight) - PANEL_EDGE_MARGIN
+    );
 
     return {
-      left: Math.min(maxLeft, Math.max(8, left)),
-      top: Math.min(maxTop, Math.max(8, top))
+      left: constrainPanelAnchorLeft(
+        left,
+        this.panelWidth,
+        COLLAPSED_RAIL_WIDTH,
+        this.panelExpandDirection,
+        window.innerWidth,
+        PANEL_EDGE_MARGIN
+      ),
+      top: Math.min(maxTop, Math.max(PANEL_EDGE_MARGIN, top))
     };
   }
 
@@ -1234,7 +1247,11 @@ class ChatGptReader {
       return;
     }
 
-    const nextWidth = this.resizeStartWidth + event.clientX - this.resizeStartX;
+    const nextWidth = getResizedPanelWidth(
+      this.resizeStartWidth,
+      event.clientX - this.resizeStartX,
+      this.panelExpandDirection
+    );
     this.panelWidth = this.constrainPanelWidth(nextWidth);
     if (this.panelPosition) {
       this.panelPosition = this.constrainPanelPosition(this.panelPosition.left, this.panelPosition.top);

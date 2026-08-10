@@ -32,14 +32,14 @@ describe("current-answer rail markers", () => {
         id: outlines[1].headings[0].id,
         answerId: outlines[1].id,
         relativeDepth: 1,
-        width: 24,
+        width: 26,
         isActive: false
       },
       {
         id: outlines[1].headings[1].id,
         answerId: outlines[1].id,
         relativeDepth: 2,
-        width: 21,
+        width: 22,
         isActive: true
       }
     ]);
@@ -75,6 +75,6 @@ describe("current-answer rail markers", () => {
         currentHeadingId: null,
         maxDepth: 6
       }).map((marker) => marker.width)
-    ).toEqual([24, 21, 18, 15, 12, 9]);
+    ).toEqual([26, 22, 18, 15, 12, 9]);
   });
 });

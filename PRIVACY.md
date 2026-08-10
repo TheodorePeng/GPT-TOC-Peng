@@ -25,7 +25,7 @@ state, including:
 - Whether only the current answer is expanded
 - Hover-preview and target-highlight preferences
 - Target-highlight duration
-- Panel width, height, position, and fixed expanded/rail mode
+- Panel width, height, position, fixed expanded/rail mode, and manual expansion direction
 
 These settings are stored by the browser for the extension's functionality.
 

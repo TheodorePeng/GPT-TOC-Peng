@@ -70,4 +70,23 @@ describe("PanelDisclosureController", () => {
     vi.advanceTimersByTime(280);
     expect(controller.presentation).toBe("rail");
   });
+
+  it("keeps a pointer preview open when a rerender drops focus inside the panel", () => {
+    const controller = new PanelDisclosureController({ mode: "rail", hoverEnabled: true });
+
+    controller.pointerEnter();
+    vi.advanceTimersByTime(120);
+    controller.focusEnter();
+
+    controller.focusLeave();
+    vi.advanceTimersByTime(280);
+
+    expect(controller.presentation).toBe("peek");
+
+    controller.pointerLeave();
+    vi.advanceTimersByTime(279);
+    expect(controller.presentation).toBe("peek");
+    vi.advanceTimersByTime(1);
+    expect(controller.presentation).toBe("rail");
+  });
 });

@@ -15,7 +15,8 @@ export class PanelDisclosureController {
   private mode: PanelMode;
   private hoverEnabled: boolean;
   private peeking = false;
-  private focused = false;
+  private pointerInside = false;
+  private focusInside = false;
   private enterTimer: number | null = null;
   private leaveTimer: number | null = null;
   private readonly onModeChange?: (mode: PanelMode) => void;
@@ -59,6 +60,7 @@ export class PanelDisclosureController {
   }
 
   pointerEnter(): void {
+    this.pointerInside = true;
     this.clearLeaveTimer();
     if (this.mode !== "rail" || this.peeking || !this.hoverEnabled || this.enterTimer !== null) {
       return;
@@ -71,24 +73,13 @@ export class PanelDisclosureController {
   }
 
   pointerLeave(): void {
+    this.pointerInside = false;
     this.clearEnterTimer();
-    if (
-      this.focused ||
-      this.mode !== "rail" ||
-      !this.peeking ||
-      this.leaveTimer !== null
-    ) {
-      return;
-    }
-
-    this.leaveTimer = window.setTimeout(() => {
-      this.leaveTimer = null;
-      this.closePeek();
-    }, LEAVE_DELAY_MS);
+    this.schedulePeekClose();
   }
 
   focusEnter(): void {
-    this.focused = true;
+    this.focusInside = true;
     this.clearLeaveTimer();
     if (this.mode === "rail") {
       this.openPeek();
@@ -96,8 +87,8 @@ export class PanelDisclosureController {
   }
 
   focusLeave(): void {
-    this.focused = false;
-    this.pointerLeave();
+    this.focusInside = false;
+    this.schedulePeekClose();
   }
 
   escape(): void {
@@ -120,6 +111,23 @@ export class PanelDisclosureController {
     }
     this.peeking = true;
     this.onPresentationChange?.(this.presentation);
+  }
+
+  private schedulePeekClose(): void {
+    if (
+      this.pointerInside ||
+      this.focusInside ||
+      this.mode !== "rail" ||
+      !this.peeking ||
+      this.leaveTimer !== null
+    ) {
+      return;
+    }
+
+    this.leaveTimer = window.setTimeout(() => {
+      this.leaveTimer = null;
+      this.closePeek();
+    }, LEAVE_DELAY_MS);
   }
 
   private closePeek(): void {

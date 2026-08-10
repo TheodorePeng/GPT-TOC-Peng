@@ -9,7 +9,8 @@ collapsible table of contents to long ChatGPT answers.
 - Builds a left-side table of contents from assistant answer headings.
 - Highlights the current heading while the ChatGPT page scrolls.
 - Clicks a heading to jump to it and briefly highlights the target in the answer.
-- Collapses to a current-answer heading rail that can preview on hover or stay pinned open.
+- Collapses to a borderless, color-coded current-answer heading rail that previews on hover.
+- Expands left or right from a stable rail anchor using a persistent manual direction control.
 - Expands the current answer to the configured depth and keeps other answers compact.
 - Stores content settings with `chrome.storage.sync` and panel UI state locally.
 

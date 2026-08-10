@@ -17,8 +17,8 @@ type RailMarkerInput = {
 };
 
 const markerWidths: Record<HeadingDepth, number> = {
-  1: 24,
-  2: 21,
+  1: 26,
+  2: 22,
   3: 18,
   4: 15,
   5: 12,

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "GPT TOC Peng",
   "description": "Add a synchronized, collapsible table of contents to long ChatGPT answers.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "permissions": ["storage"],
   "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
   "icons": {
