@@ -14,7 +14,7 @@
 body {
   background: #fff;
   margin: 0;
-  min-width: 316px;
+  min-width: 336px;
 }
 
 button,
@@ -96,6 +96,20 @@ h1 {
   overflow: hidden;
 }
 
+.panel + .panel {
+  margin-top: 12px;
+}
+
+.section-title {
+  background: #fafafa;
+  border-bottom: 1px solid #ececec;
+  color: #555;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  margin: 0;
+  padding: 9px 13px;
+}
+
 .field,
 .check-row {
   display: grid;
@@ -104,6 +118,7 @@ h1 {
 }
 
 .field + .check-row,
+.check-row + .check-row,
 .check-row + .field {
   border-top: 1px solid #ececec;
 }
@@ -160,6 +175,28 @@ small {
   color: #222;
   height: 32px;
   padding: 0 9px;
+}
+
+.field select {
+  appearance: none;
+  background: #f7f7f7;
+  border: 1px solid #e5e5e5;
+  border-radius: 7px;
+  color: #222;
+  height: 34px;
+  padding: 0 32px 0 9px;
+}
+
+.field select:focus {
+  border-color: rgba(16, 163, 127, 0.55);
+  box-shadow: 0 0 0 2px rgba(16, 163, 127, 0.12);
+  outline: none;
+}
+
+.field select:disabled {
+  color: #aaa;
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 
 .field input[type="number"]:focus {

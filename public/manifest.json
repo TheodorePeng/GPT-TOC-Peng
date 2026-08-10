@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "GPT Reader",
-  "description": "Add a synchronized Markdown outline to long ChatGPT answers.",
-  "version": "0.1.1",
+  "name": "GPT TOC Peng",
+  "description": "Add a synchronized, collapsible table of contents to long ChatGPT answers.",
+  "version": "0.2.0",
   "permissions": ["storage"],
   "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
   "icons": {
@@ -12,7 +12,7 @@
     "128": "icons/icon-128.png"
   },
   "action": {
-    "default_title": "GPT Reader",
+    "default_title": "GPT TOC Peng",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon-16.png",

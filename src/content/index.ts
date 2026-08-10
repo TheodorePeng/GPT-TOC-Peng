@@ -16,6 +16,13 @@ import {
   saveSettings,
   subscribeSettings
 } from "../shared/settings";
+import { HeadingHighlighter } from "./highlighter";
+import {
+  PanelDisclosureController,
+  type PanelMode,
+  type PanelPresentation
+} from "./panel-state";
+import { getRailMarkers } from "./rail";
 
 const ROOT_ID = "gpt-reader-root";
 const ASSISTANT_SELECTOR = "[data-message-author-role='assistant']";
@@ -48,6 +55,7 @@ type PanelUiState = {
   width?: number;
   height?: number;
   position?: PanelPosition | null;
+  mode?: PanelMode;
 };
 
 type ConversationRound = {
@@ -70,6 +78,7 @@ class ChatGptReader {
   private root: HTMLElement | null = null;
   private list: HTMLElement | null = null;
   private activeDot: HTMLElement | null = null;
+  private collapsedRailMarkers: HTMLElement | null = null;
   private settings: TocSettings = DEFAULT_SETTINGS;
   private outlines: AnswerOutline[] = [];
   private allHeadings: HeadingInfo[] = [];
@@ -98,12 +107,23 @@ class ChatGptReader {
   private isResizingHeight = false;
   private isDragging = false;
   private suppressActiveSyncUntil = 0;
-  private collapsed = false;
+  private panelMode: PanelMode = "expanded";
+  private panelDisclosure: PanelDisclosureController | null = null;
+  private readonly headingHighlighter = new HeadingHighlighter();
   private unsubscribeSettings: (() => void) | null = null;
 
   async init(): Promise<void> {
     this.settings = await getSettings();
     await this.loadPanelUiState();
+    this.panelDisclosure = new PanelDisclosureController({
+      mode: this.panelMode,
+      hoverEnabled: this.settings.hoverExpandEnabled,
+      onModeChange: (mode) => {
+        this.panelMode = mode;
+        void this.savePanelUiState();
+      },
+      onPresentationChange: () => this.applyPanelPresentation()
+    });
     this.ensureShell();
     this.bindEvents();
     this.render();
@@ -124,9 +144,13 @@ class ChatGptReader {
       this.root = existing;
       this.list = existing.querySelector<HTMLElement>("[data-gpt-reader-list]");
       this.activeDot = existing.querySelector<HTMLElement>("[data-gpt-reader-active-dot]");
+      this.collapsedRailMarkers = existing.querySelector<HTMLElement>(
+        "[data-gpt-reader-collapsed-markers]"
+      );
       this.applyPanelWidth();
       this.applyPanelHeight();
       this.applyPanelPosition();
+      this.applyPanelPresentation();
       return;
     }
 
@@ -162,7 +186,8 @@ class ChatGptReader {
             <input type="number" min="0" max="50" step="1" data-gpt-reader-max-rounds />
             <p>0 表示不限制；长会话建议 3-5 轮。</p>
           </label>
-          <p>其他回答默认折叠，可点击回答标题展开</p>
+          <p>其他回答默认折叠，可点击回答标题展开。</p>
+          <p>悬浮展开和正文高亮可在扩展图标弹窗中设置。</p>
         </form>
         <div class="gpt-reader-body">
           <div class="gpt-reader-rail" aria-hidden="true">
@@ -173,23 +198,68 @@ class ChatGptReader {
         <div class="gpt-reader-resize-handle" data-gpt-reader-resize title="拖拽调整目录宽度" aria-hidden="true"></div>
         <div class="gpt-reader-resize-height-handle" data-gpt-reader-resize-height title="拖拽调整目录高度" aria-hidden="true"></div>
       </section>
-      <button type="button" class="gpt-reader-float" data-gpt-reader-float>目录</button>
+      <button
+        type="button"
+        class="gpt-reader-collapsed-rail"
+        data-gpt-reader-collapsed-rail
+        aria-label="展开 ChatGPT 回答目录"
+        aria-expanded="false"
+      >
+        <span class="gpt-reader-collapsed-markers" data-gpt-reader-collapsed-markers aria-hidden="true"></span>
+      </button>
     `;
 
     document.body.append(root);
     this.root = root;
     this.list = root.querySelector<HTMLElement>("[data-gpt-reader-list]");
     this.activeDot = root.querySelector<HTMLElement>("[data-gpt-reader-active-dot]");
+    this.collapsedRailMarkers = root.querySelector<HTMLElement>(
+      "[data-gpt-reader-collapsed-markers]"
+    );
     this.applyPanelWidth();
     this.applyPanelHeight();
     this.applyPanelPosition();
+    this.applyPanelPresentation();
   }
 
   private bindEvents(): void {
     this.list?.addEventListener("scroll", () => this.positionActiveDot(), { passive: true });
 
+    this.root?.addEventListener("pointerenter", () => this.panelDisclosure?.pointerEnter());
+    this.root?.addEventListener("pointerleave", () => this.panelDisclosure?.pointerLeave());
+    this.root?.addEventListener("focusin", () => this.panelDisclosure?.focusEnter());
+    this.root?.addEventListener("focusout", (event) => {
+      if (!(event.relatedTarget instanceof Node) || !this.root?.contains(event.relatedTarget)) {
+        this.panelDisclosure?.focusLeave();
+      }
+    });
+    this.root?.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || this.panelDisclosure?.presentation !== "peek") {
+        return;
+      }
+      event.preventDefault();
+      this.panelDisclosure.escape();
+      this.root
+        ?.querySelector<HTMLButtonElement>("[data-gpt-reader-collapsed-rail]")
+        ?.focus();
+    });
+
     this.root?.addEventListener("pointerdown", (event) => {
       const target = event.target as HTMLElement;
+      if (target.closest("[data-gpt-reader-collapsed-rail]")) {
+        this.panelDisclosure?.setMode("expanded");
+        return;
+      }
+
+      if (
+        this.panelDisclosure?.presentation === "peek" &&
+        target.closest(
+          ".gpt-reader-header, .gpt-reader-settings, [data-gpt-reader-resize], [data-gpt-reader-resize-height]"
+        )
+      ) {
+        this.panelDisclosure.promote();
+      }
+
       if (target.closest("[data-gpt-reader-resize]")) {
         this.startResize(event);
         return;
@@ -239,14 +309,12 @@ class ChatGptReader {
       }
 
       if (target.closest("[data-gpt-reader-collapse]")) {
-        this.collapsed = true;
-        this.render();
+        this.panelDisclosure?.setMode("rail");
         return;
       }
 
-      if (target.closest("[data-gpt-reader-float]")) {
-        this.collapsed = false;
-        this.render();
+      if (target.closest("[data-gpt-reader-collapsed-rail]")) {
+        this.panelDisclosure?.setMode("expanded");
       }
     });
 
@@ -286,6 +354,7 @@ class ChatGptReader {
     this.unsubscribeSettings?.();
     this.unsubscribeSettings = subscribeSettings((settings) => {
       this.settings = settings;
+      this.panelDisclosure?.setHoverEnabled(settings.hoverExpandEnabled);
       this.scan();
     });
   }
@@ -435,7 +504,7 @@ class ChatGptReader {
     }
 
     this.root.classList.toggle("is-disabled", !this.settings.enabled);
-    this.root.classList.toggle("is-collapsed", this.collapsed);
+    this.applyPanelPresentation();
     this.root
       .querySelector<HTMLInputElement>("[data-gpt-reader-enabled]")
       ?.toggleAttribute("checked", this.settings.enabled);
@@ -468,6 +537,71 @@ class ChatGptReader {
 
     this.renderDepthButtons();
     this.renderList();
+    this.renderCollapsedRail();
+  }
+
+  private applyPanelPresentation(): void {
+    if (!this.root) {
+      return;
+    }
+
+    const presentation: PanelPresentation =
+      this.panelDisclosure?.presentation ?? this.panelMode;
+    const isRail = presentation === "rail";
+    this.root.classList.toggle("is-collapsed", isRail);
+    this.root.classList.toggle("is-peek", presentation === "peek");
+
+    const railButton = this.root.querySelector<HTMLButtonElement>(
+      "[data-gpt-reader-collapsed-rail]"
+    );
+    if (railButton) {
+      railButton.setAttribute("aria-expanded", String(!isRail));
+      railButton.title = isRail ? "点击固定展开目录" : "ChatGPT 回答目录已展开";
+    }
+  }
+
+  private renderCollapsedRail(): void {
+    if (!this.collapsedRailMarkers) {
+      return;
+    }
+
+    const markers = getRailMarkers({
+      outlines: this.outlines,
+      currentAnswerId: this.currentAnswerId,
+      currentHeadingId: this.currentHeadingId,
+      maxDepth: this.settings.maxDepth
+    });
+
+    if (markers.length === 0) {
+      const empty = document.createElement("span");
+      empty.className = "gpt-reader-collapsed-marker is-empty";
+      this.collapsedRailMarkers.replaceChildren(empty);
+    } else {
+      this.collapsedRailMarkers.replaceChildren(
+        ...markers.map((marker) => {
+          const element = document.createElement("span");
+          element.className = "gpt-reader-collapsed-marker";
+          element.dataset.depth = String(marker.relativeDepth);
+          element.classList.toggle("is-active", marker.isActive);
+          element.style.width = `${marker.width}px`;
+          return element;
+        })
+      );
+    }
+
+    this.collapsedRailMarkers.style.setProperty(
+      "--gpt-reader-marker-count",
+      String(Math.max(1, markers.length))
+    );
+    const railButton = this.root?.querySelector<HTMLButtonElement>(
+      "[data-gpt-reader-collapsed-rail]"
+    );
+    railButton?.setAttribute(
+      "aria-label",
+      markers.length > 0
+        ? `展开 ChatGPT 回答目录，当前回答 ${markers.length} 个标题`
+        : "展开 ChatGPT 回答目录，当前回答暂无标题"
+    );
   }
 
   private renderDepthButtons(): void {
@@ -546,6 +680,9 @@ class ChatGptReader {
         button.dataset.gptReaderHeading = heading.id;
         button.dataset.gptReaderAnswerId = heading.answerId;
         button.classList.toggle("is-active", heading.id === this.currentHeadingId);
+        if (heading.id === this.currentHeadingId) {
+          button.setAttribute("aria-current", "location");
+        }
         button.style.setProperty(
           "--toc-indent",
           `${Math.max(0, heading.relativeDepth - 1) * 14}px`
@@ -564,6 +701,7 @@ class ChatGptReader {
     this.list.replaceChildren(fragment);
     this.positionActiveDot();
     this.keepActiveHeadingInView();
+    this.renderCollapsedRail();
   }
 
   private syncActiveHeading(previousHeadingId: string | null): void {
@@ -576,6 +714,7 @@ class ChatGptReader {
         `[data-gpt-reader-heading="${CSS.escape(previousHeadingId)}"]`
       );
       previousButton?.classList.remove("is-active");
+      previousButton?.removeAttribute("aria-current");
     }
 
     if (this.currentHeadingId) {
@@ -583,9 +722,11 @@ class ChatGptReader {
         `[data-gpt-reader-heading="${CSS.escape(this.currentHeadingId)}"]`
       );
       currentButton?.classList.add("is-active");
+      currentButton?.setAttribute("aria-current", "location");
     }
 
     this.keepActiveHeadingInView();
+    this.renderCollapsedRail();
   }
 
   private positionActiveDot(): void {
@@ -671,6 +812,10 @@ class ChatGptReader {
     this.currentAnswerId = heading.answerId;
     this.suppressActiveSyncUntil = performance.now() + CLICK_SCROLL_SYNC_PAUSE_MS;
     heading.element.scrollIntoView({ behavior: "auto", block: "start" });
+    this.headingHighlighter.show(heading.element, {
+      enabled: this.settings.targetHighlightEnabled,
+      durationMs: this.settings.targetHighlightDurationMs
+    });
     this.renderList();
   }
 
@@ -915,6 +1060,7 @@ class ChatGptReader {
     const legacyPosition = this.readLegacyPanelPosition();
     const width = this.readStoredNumber(storedState.width) ?? legacyWidth;
     const height = this.readStoredNumber(storedState.height) ?? legacyHeight;
+    this.panelMode = storedState.mode === "rail" ? "rail" : "expanded";
 
     if (width !== undefined) {
       this.panelWidth = this.constrainPanelWidth(width);
@@ -954,7 +1100,8 @@ class ChatGptReader {
     const state: PanelUiState = {
       width: Math.round(this.panelWidth),
       height: Math.round(this.panelHeight),
-      position: this.panelPosition
+      position: this.panelPosition,
+      mode: this.panelDisclosure?.persistentMode ?? this.panelMode
     };
 
     window.localStorage.setItem(WIDTH_STORAGE_KEY, String(state.width));

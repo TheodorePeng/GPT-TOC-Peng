@@ -1,17 +1,25 @@
 export type HeadingDepth = 1 | 2 | 3 | 4 | 5 | 6;
 
+export type TargetHighlightDurationMs = 800 | 1500 | 3000;
+
 export type TocSettings = {
   enabled: boolean;
   maxDepth: HeadingDepth;
   expandCurrentOnly: boolean;
   maxVisibleRounds: number;
+  hoverExpandEnabled: boolean;
+  targetHighlightEnabled: boolean;
+  targetHighlightDurationMs: TargetHighlightDurationMs;
 };
 
 export const DEFAULT_SETTINGS: TocSettings = {
   enabled: true,
   maxDepth: 2,
   expandCurrentOnly: true,
-  maxVisibleRounds: 0
+  maxVisibleRounds: 0,
+  hoverExpandEnabled: true,
+  targetHighlightEnabled: true,
+  targetHighlightDurationMs: 1500
 };
 
 const SETTINGS_KEY = "gptReaderSettings";
@@ -23,6 +31,9 @@ const isDepth = (value: unknown): value is HeadingDepth =>
   Number.isInteger(value) &&
   value >= 1 &&
   value <= 6;
+
+const isHighlightDuration = (value: unknown): value is TargetHighlightDurationMs =>
+  value === 800 || value === 1500 || value === 3000;
 
 const normalizeSettings = (value: unknown): TocSettings => {
   const input = typeof value === "object" && value !== null ? (value as SettingsPatch) : {};
@@ -41,7 +52,18 @@ const normalizeSettings = (value: unknown): TocSettings => {
       typeof input.expandCurrentOnly === "boolean"
         ? input.expandCurrentOnly
         : DEFAULT_SETTINGS.expandCurrentOnly,
-    maxVisibleRounds
+    maxVisibleRounds,
+    hoverExpandEnabled:
+      typeof input.hoverExpandEnabled === "boolean"
+        ? input.hoverExpandEnabled
+        : DEFAULT_SETTINGS.hoverExpandEnabled,
+    targetHighlightEnabled:
+      typeof input.targetHighlightEnabled === "boolean"
+        ? input.targetHighlightEnabled
+        : DEFAULT_SETTINGS.targetHighlightEnabled,
+    targetHighlightDurationMs: isHighlightDuration(input.targetHighlightDurationMs)
+      ? input.targetHighlightDurationMs
+      : DEFAULT_SETTINGS.targetHighlightDurationMs
   };
 };
 

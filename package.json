@@ -1,7 +1,7 @@
 {
-  "name": "gpt-reader",
-  "version": "0.1.1",
-  "description": "ChatGPT long-answer table of contents Chrome extension.",
+  "name": "gpt-toc-peng",
+  "version": "0.2.0",
+  "description": "A synchronized, collapsible table of contents for long ChatGPT answers.",
   "private": true,
   "type": "module",
   "scripts": {
@@ -17,6 +17,11 @@
   ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheodorePeng/GPT-TOC-Peng.git"
+  },
+  "homepage": "https://github.com/TheodorePeng/GPT-TOC-Peng",
   "devDependencies": {
     "@types/chrome": "^0.1.43",
     "@types/node": "^25.9.3",

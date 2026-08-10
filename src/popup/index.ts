@@ -1,6 +1,7 @@
 import "./styles.css";
 import {
   type HeadingDepth,
+  type TargetHighlightDurationMs,
   type TocSettings,
   headingDepths,
   getSettings,
@@ -21,8 +22,8 @@ const render = (): void => {
     <section class="popup-shell">
       <header>
         <div>
-          <p>GPT Reader</p>
-          <h1>ChatGPT 回答目录</h1>
+          <p>GPT TOC Peng</p>
+          <h1>ChatGPT 回答目录设置</h1>
         </div>
         <label class="switch" title="启用目录">
           <input type="checkbox" data-setting-enabled ${settings.enabled ? "checked" : ""} />
@@ -30,7 +31,8 @@ const render = (): void => {
         </label>
       </header>
 
-      <div class="panel">
+      <section class="panel" aria-labelledby="toc-content-settings">
+        <h2 class="section-title" id="toc-content-settings">目录内容</h2>
         <div class="field">
           <div>
             <strong>目录最大层级</strong>
@@ -79,7 +81,57 @@ const render = (): void => {
             value="${settings.maxVisibleRounds}"
           />
         </label>
-      </div>
+      </section>
+
+      <section class="panel" aria-labelledby="toc-interaction-settings">
+        <h2 class="section-title" id="toc-interaction-settings">交互与高亮</h2>
+        <label class="check-row">
+          <span>
+            <strong>悬浮竖条自动展开</strong>
+            <small>悬浮折叠轨道时临时预览完整目录。</small>
+          </span>
+          <input
+            type="checkbox"
+            data-setting-hover-expand
+            ${settings.hoverExpandEnabled ? "checked" : ""}
+          />
+        </label>
+
+        <label class="check-row">
+          <span>
+            <strong>点击定位后高亮正文标题</strong>
+            <small>跳转后短暂标出目标标题，便于确认位置。</small>
+          </span>
+          <input
+            type="checkbox"
+            data-setting-target-highlight
+            ${settings.targetHighlightEnabled ? "checked" : ""}
+          />
+        </label>
+
+        <label class="field">
+          <div>
+            <strong>高亮持续时间</strong>
+            <small>关闭正文高亮后此选项不可用。</small>
+          </div>
+          <select
+            data-setting-highlight-duration
+            ${settings.targetHighlightEnabled ? "" : "disabled"}
+          >
+            ${([800, 1500, 3000] as TargetHighlightDurationMs[])
+              .map(
+                (duration) => `
+                  <option value="${duration}" ${
+                    duration === settings.targetHighlightDurationMs ? "selected" : ""
+                  }>
+                    ${duration / 1000} 秒
+                  </option>
+                `
+              )
+              .join("")}
+          </select>
+        </label>
+      </section>
 
       <footer>
         <span class="status-dot"></span>
@@ -125,6 +177,20 @@ const init = async (): Promise<void> => {
     if (target.matches("[data-setting-max-rounds]")) {
       const nextValue = Math.min(50, Math.max(0, Math.trunc(Number(target.value) || 0)));
       void updateSettings({ maxVisibleRounds: nextValue });
+    }
+
+    if (target.matches("[data-setting-hover-expand]")) {
+      void updateSettings({ hoverExpandEnabled: target.checked });
+    }
+
+    if (target.matches("[data-setting-target-highlight]")) {
+      void updateSettings({ targetHighlightEnabled: target.checked });
+    }
+
+    if (target.matches("[data-setting-highlight-duration]")) {
+      void updateSettings({
+        targetHighlightDurationMs: Number(target.value) as TargetHighlightDurationMs
+      });
     }
   });
 };

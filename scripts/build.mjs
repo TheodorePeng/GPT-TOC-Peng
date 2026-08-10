@@ -18,7 +18,7 @@ await build({
     sourcemap: false,
     lib: {
       entry: path.join(root, "src/content/index.ts"),
-      name: "GptReaderContent",
+      name: "GptTocPengContent",
       formats: ["iife"],
       fileName: () => "content.js",
       cssFileName: "content"

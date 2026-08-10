@@ -1,45 +1,56 @@
-# Privacy Policy for GPT Reader
+# Privacy Policy for GPT TOC Peng
 
-Effective date: June 12, 2026
+Effective date: August 10, 2026
 
-GPT Reader is a Chrome extension that adds a synchronized Markdown outline to long ChatGPT answers.
+GPT TOC Peng is a Chrome extension that adds a synchronized, collapsible table
+of contents to long ChatGPT answers.
 
 ## Data Collection
 
-GPT Reader does not collect, upload, sell, share, or transfer personal data.
+GPT TOC Peng does not collect, upload, sell, share, or transfer personal data.
 
-The extension reads heading elements from ChatGPT assistant responses only on supported ChatGPT pages so it can build a local table of contents in the browser. This processing happens locally on the user's device. ChatGPT conversations and page content are not sent to the developer or to any third party.
+The extension reads heading elements from ChatGPT assistant responses only on
+supported ChatGPT pages so it can build a local table of contents and heading
+rail. This processing happens locally on the user's device. ChatGPT
+conversations and page content are not sent to the developer or to any third
+party.
 
 ## Stored Data
 
-GPT Reader uses Chrome extension storage only to save user preferences, including:
+GPT TOC Peng uses Chrome extension storage only to save preferences and local UI
+state, including:
 
 - Whether the outline is enabled
-- Maximum heading depth
+- Maximum heading depth and visible conversation rounds
 - Whether only the current answer is expanded
-- Outline panel width and position
+- Hover-preview and target-highlight preferences
+- Target-highlight duration
+- Panel width, height, position, and fixed expanded/rail mode
 
 These settings are stored by the browser for the extension's functionality.
 
 ## Permissions
 
-GPT Reader requests access only to:
+GPT TOC Peng requests access only to:
 
 - `https://chatgpt.com/*`
 - `https://chat.openai.com/*`
 
-These permissions allow the extension to detect headings in ChatGPT responses and display the outline panel on those pages.
+These permissions allow the extension to detect headings in ChatGPT responses
+and display the table of contents on those pages.
 
 ## Remote Code
 
-GPT Reader does not use remote code. All JavaScript and CSS are included in the extension package.
+GPT TOC Peng does not use remote code. All JavaScript and CSS are included in
+the extension package.
 
 ## Third Parties
 
-GPT Reader does not sell or transfer user data to third parties. GPT Reader does not use user data for advertising, creditworthiness, or any purpose unrelated to its single purpose.
+GPT TOC Peng does not sell or transfer user data to third parties and does not
+use user data for advertising, creditworthiness, or any unrelated purpose.
 
 ## Contact
 
-For support or privacy questions, please use the GitHub repository:
+For support or privacy questions, use the GitHub repository:
 
-https://github.com/lu-shu-ang/gpt-reader
+https://github.com/TheodorePeng/GPT-TOC-Peng
