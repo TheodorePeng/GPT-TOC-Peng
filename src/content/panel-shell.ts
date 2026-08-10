@@ -69,8 +69,12 @@ export const createPanelShell = (): HTMLElement => {
           <input type="number" min="0" max="50" step="1" data-gpt-reader-max-rounds />
           <p>0 表示不限制；长会话建议 3-5 轮。</p>
         </label>
+        <label class="gpt-reader-switch">
+          <input type="checkbox" data-gpt-reader-wrap-titles />
+          <span>长标题自动换行</span>
+        </label>
         <p>其他回答默认折叠，可点击回答标题展开。</p>
-        <p>悬浮展开和正文高亮可在扩展图标弹窗中设置。</p>
+        <p>悬浮展开、跳转位置和正文高亮可在扩展图标弹窗中设置。</p>
       </form>
       <div class="gpt-reader-body">
         <div class="gpt-reader-rail" aria-hidden="true">
@@ -116,5 +120,13 @@ export const syncPanelDirectionControls = (
   if (collapseButton) {
     collapseButton.setAttribute("aria-label", collapseLabel);
     collapseButton.title = collapseLabel;
+  }
+};
+
+export const syncPanelTitleWrapping = (root: HTMLElement, enabled: boolean): void => {
+  root.classList.toggle("is-title-wrap-enabled", enabled);
+  const checkbox = root.querySelector<HTMLInputElement>("[data-gpt-reader-wrap-titles]");
+  if (checkbox) {
+    checkbox.checked = enabled;
   }
 };

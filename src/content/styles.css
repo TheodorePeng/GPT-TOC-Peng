@@ -368,6 +368,22 @@
   white-space: nowrap;
 }
 
+#gpt-reader-root.is-title-wrap-enabled .gpt-reader-heading {
+  align-items: start;
+}
+
+#gpt-reader-root.is-title-wrap-enabled .gpt-reader-heading span:last-child {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  word-break: break-word;
+}
+
+#gpt-reader-root.is-title-wrap-enabled .gpt-reader-heading-depth {
+  margin-top: 2px;
+}
+
 .gpt-reader-heading-depth {
   color: #b0b0b0;
   font-size: 9px;

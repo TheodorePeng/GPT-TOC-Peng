@@ -1,6 +1,6 @@
 # Privacy Policy for GPT TOC Peng
 
-Effective date: August 10, 2026
+Effective date: August 11, 2026
 
 GPT TOC Peng is a Chrome extension that adds a synchronized, collapsible table
 of contents to long ChatGPT answers.
@@ -25,6 +25,7 @@ state, including:
 - Whether only the current answer is expanded
 - Hover-preview and target-highlight preferences
 - Target-highlight duration
+- Long-title wrapping preference and heading jump-position percentage
 - Panel width, height, position, fixed expanded/rail mode, and manual expansion direction
 
 These settings are stored by the browser for the extension's functionality.

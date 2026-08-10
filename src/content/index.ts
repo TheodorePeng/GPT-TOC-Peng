@@ -16,6 +16,7 @@ import {
   saveSettings,
   subscribeSettings
 } from "../shared/settings";
+import { scrollHeadingToPercent } from "../shared/heading-scroll";
 import { HeadingHighlighter } from "./highlighter";
 import {
   constrainPanelAnchorLeft,
@@ -31,7 +32,8 @@ import {
 import {
   createPanelShell,
   getAnswerChevronIcon,
-  syncPanelDirectionControls
+  syncPanelDirectionControls,
+  syncPanelTitleWrapping
 } from "./panel-shell";
 import { getRailMarkers } from "./rail";
 
@@ -301,6 +303,10 @@ class ChatGptReader {
       if (target.matches("[data-gpt-reader-max-rounds]")) {
         void this.updateSettings({ maxVisibleRounds: this.parseRoundLimit(target.value) });
       }
+
+      if (target.matches("[data-gpt-reader-wrap-titles]")) {
+        void this.updateSettings({ wrapLongTitles: target.checked });
+      }
     });
   }
 
@@ -474,6 +480,7 @@ class ChatGptReader {
     }
 
     this.root.classList.toggle("is-disabled", !this.settings.enabled);
+    syncPanelTitleWrapping(this.root, this.settings.wrapLongTitles);
     this.applyPanelDirection();
     this.applyPanelPresentation();
     this.root
@@ -776,7 +783,10 @@ class ChatGptReader {
     this.currentHeadingId = heading.id;
     this.currentAnswerId = heading.answerId;
     this.suppressActiveSyncUntil = performance.now() + CLICK_SCROLL_SYNC_PAUSE_MS;
-    heading.element.scrollIntoView({ behavior: "auto", block: "start" });
+    scrollHeadingToPercent(
+      heading.element,
+      this.settings.headingScrollPositionPercent
+    );
     this.headingHighlighter.show(heading.element, {
       enabled: this.settings.targetHighlightEnabled,
       durationMs: this.settings.targetHighlightDurationMs

@@ -10,6 +10,8 @@ export type TocSettings = {
   hoverExpandEnabled: boolean;
   targetHighlightEnabled: boolean;
   targetHighlightDurationMs: TargetHighlightDurationMs;
+  wrapLongTitles: boolean;
+  headingScrollPositionPercent: number;
 };
 
 export const DEFAULT_SETTINGS: TocSettings = {
@@ -19,7 +21,9 @@ export const DEFAULT_SETTINGS: TocSettings = {
   maxVisibleRounds: 0,
   hoverExpandEnabled: true,
   targetHighlightEnabled: true,
-  targetHighlightDurationMs: 1500
+  targetHighlightDurationMs: 1500,
+  wrapLongTitles: true,
+  headingScrollPositionPercent: 25
 };
 
 const SETTINGS_KEY = "gptReaderSettings";
@@ -34,6 +38,14 @@ const isDepth = (value: unknown): value is HeadingDepth =>
 
 const isHighlightDuration = (value: unknown): value is TargetHighlightDurationMs =>
   value === 800 || value === 1500 || value === 3000;
+
+export const normalizeHeadingScrollPositionPercent = (value: unknown): number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_SETTINGS.headingScrollPositionPercent;
+  }
+
+  return Math.min(100, Math.max(0, Math.round(value)));
+};
 
 const normalizeSettings = (value: unknown): TocSettings => {
   const input = typeof value === "object" && value !== null ? (value as SettingsPatch) : {};
@@ -63,7 +75,14 @@ const normalizeSettings = (value: unknown): TocSettings => {
         : DEFAULT_SETTINGS.targetHighlightEnabled,
     targetHighlightDurationMs: isHighlightDuration(input.targetHighlightDurationMs)
       ? input.targetHighlightDurationMs
-      : DEFAULT_SETTINGS.targetHighlightDurationMs
+      : DEFAULT_SETTINGS.targetHighlightDurationMs,
+    wrapLongTitles:
+      typeof input.wrapLongTitles === "boolean"
+        ? input.wrapLongTitles
+        : DEFAULT_SETTINGS.wrapLongTitles,
+    headingScrollPositionPercent: normalizeHeadingScrollPositionPercent(
+      input.headingScrollPositionPercent
+    )
   };
 };
 

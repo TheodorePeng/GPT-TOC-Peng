@@ -14,7 +14,9 @@
 body {
   background: #fff;
   margin: 0;
+  max-height: 600px;
   min-width: 336px;
+  overflow-y: auto;
 }
 
 button,
@@ -175,6 +177,41 @@ small {
   color: #222;
   height: 32px;
   padding: 0 9px;
+}
+
+.scroll-position-controls {
+  align-items: center;
+  display: grid;
+  gap: 9px;
+  grid-template-columns: minmax(140px, 1fr) auto;
+}
+
+.scroll-position-controls input[type="range"] {
+  accent-color: #10a37f;
+  cursor: pointer;
+  margin: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+.scroll-position-number {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+}
+
+.scroll-position-number input[type="number"] {
+  width: 64px;
+}
+
+.scroll-position-controls output {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
 }
 
 .field select {

@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_SETTINGS, getSettings, mergeSettings, subscribeSettings } from "./settings";
+import {
+  DEFAULT_SETTINGS,
+  getSettings,
+  mergeSettings,
+  normalizeHeadingScrollPositionPercent,
+  subscribeSettings
+} from "./settings";
 
 const SETTINGS_KEY = "gptReaderSettings";
 
@@ -47,7 +53,9 @@ describe("interaction settings compatibility", () => {
     expect(DEFAULT_SETTINGS).toMatchObject({
       hoverExpandEnabled: true,
       targetHighlightEnabled: true,
-      targetHighlightDurationMs: 1500
+      targetHighlightDurationMs: 1500,
+      wrapLongTitles: true,
+      headingScrollPositionPercent: 25
     });
   });
 
@@ -66,7 +74,9 @@ describe("interaction settings compatibility", () => {
       maxVisibleRounds: 3,
       hoverExpandEnabled: true,
       targetHighlightEnabled: true,
-      targetHighlightDurationMs: 1500
+      targetHighlightDurationMs: 1500,
+      wrapLongTitles: true,
+      headingScrollPositionPercent: 25
     });
   });
 
@@ -80,6 +90,36 @@ describe("interaction settings compatibility", () => {
     expect(
       mergeSettings(DEFAULT_SETTINGS, { targetHighlightDurationMs: 999 } as never)
     ).toMatchObject({ targetHighlightDurationMs: 1500 });
+  });
+
+  it.each([
+    [0, 0],
+    [25, 25],
+    [49.5, 50],
+    [100, 100],
+    [-10, 0],
+    [120, 100]
+  ])("normalizes heading scroll position %s to %s", (value, expected) => {
+    expect(normalizeHeadingScrollPositionPercent(value)).toBe(expected);
+  });
+
+  it.each(["25", Number.NaN, Number.POSITIVE_INFINITY, null, undefined])(
+    "falls back to 25 for invalid heading scroll position %s",
+    (value) => {
+      expect(normalizeHeadingScrollPositionPercent(value)).toBe(25);
+    }
+  );
+
+  it("merges title wrapping and normalized heading position", () => {
+    expect(
+      mergeSettings(DEFAULT_SETTINGS, {
+        wrapLongTitles: false,
+        headingScrollPositionPercent: 87.6
+      })
+    ).toMatchObject({
+      wrapLongTitles: false,
+      headingScrollPositionPercent: 88
+    });
   });
 
   it("normalizes interaction defaults before notifying subscribers", () => {
@@ -98,7 +138,9 @@ describe("interaction settings compatibility", () => {
       expect.objectContaining({
         hoverExpandEnabled: true,
         targetHighlightEnabled: true,
-        targetHighlightDurationMs: 1500
+        targetHighlightDurationMs: 1500,
+        wrapLongTitles: true,
+        headingScrollPositionPercent: 25
       })
     );
 

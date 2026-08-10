@@ -1,4 +1,5 @@
 import type { HeadingDepth, TocSettings } from "./settings";
+import { HEADING_SCROLL_TOP_INSET_PX } from "./heading-scroll";
 
 export type HeadingInfo = {
   id: string;
@@ -79,7 +80,7 @@ const ensureHeadingId = (
 ): string => {
   const id = `gpt-reader-heading-${answerIndex + 1}-${headingIndex + 1}`;
   heading.dataset.gptReaderHeadingId = id;
-  heading.style.scrollMarginTop = "96px";
+  heading.style.scrollMarginTop = `${HEADING_SCROLL_TOP_INSET_PX}px`;
   return id;
 };
 
