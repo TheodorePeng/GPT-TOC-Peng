@@ -3,9 +3,11 @@ import {
   type HeadingDepth,
   type TargetHighlightDurationMs,
   type TocSettings,
+  DEFAULT_SETTINGS,
   getSettings,
   mergeSettings,
-  saveSettings
+  saveSettings,
+  subscribeSettings
 } from "../shared/settings";
 import {
   readHeadingScrollPositionInput,
@@ -16,6 +18,10 @@ import { createPopupMarkup } from "./view";
 const app = document.getElementById("app");
 
 let settings: TocSettings;
+let savedSettings: TocSettings;
+let saveStatus = "已保存";
+let saveRevision = 0;
+let saving = false;
 
 const render = (): void => {
   if (!app) {
@@ -23,17 +29,55 @@ const render = (): void => {
   }
 
   app.innerHTML = createPopupMarkup(settings);
+  const status = app.querySelector<HTMLElement>("[data-settings-save-status]");
+  if (status) {
+    status.textContent = saveStatus;
+    status.classList.toggle("is-error", saveStatus.includes("失败"));
+  }
 };
 
 const updateSettings = async (patch: Partial<TocSettings>): Promise<void> => {
   settings = mergeSettings(settings, patch);
+  const nextSettings = settings;
+  const revision = ++saveRevision;
+  saveStatus = "正在保存…";
+  saving = true;
   render();
-  await saveSettings(settings);
+  try {
+    await saveSettings(nextSettings);
+    savedSettings = nextSettings;
+    if (revision === saveRevision) {
+      saveStatus = "已保存";
+      saving = false;
+      render();
+    }
+  } catch {
+    if (revision === saveRevision) {
+      settings = savedSettings;
+      saveStatus = "保存失败，请重试";
+      saving = false;
+      render();
+    }
+  }
 };
 
 const init = async (): Promise<void> => {
-  settings = await getSettings();
+  try {
+    settings = await getSettings();
+  } catch {
+    settings = DEFAULT_SETTINGS;
+    saveStatus = "读取设置失败，显示默认值";
+  }
+  savedSettings = settings;
   render();
+  subscribeSettings((nextSettings) => {
+    if (!saving) {
+      settings = nextSettings;
+      savedSettings = nextSettings;
+      saveStatus = "已保存";
+      render();
+    }
+  });
 
   app?.addEventListener("click", (event) => {
     const target = event.target as HTMLElement;
@@ -51,6 +95,10 @@ const init = async (): Promise<void> => {
     const target = event.target as HTMLInputElement;
     if (target.matches("[data-setting-scroll-position-range]")) {
       syncHeadingScrollPositionControls(app, Number(target.value));
+      const status = app.querySelector<HTMLElement>("[data-settings-save-status]");
+      if (status) {
+        status.textContent = "松开滑块后应用";
+      }
     }
   });
 

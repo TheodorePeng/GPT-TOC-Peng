@@ -269,3 +269,65 @@ footer {
   height: 7px;
   width: 7px;
 }
+
+.save-status {
+  color: #0f7f64;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.save-status.is-error {
+  color: #b42318;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #0c8f70;
+  outline-offset: 2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root,
+  body {
+    background: #202020;
+    color: #f0f0f0;
+    color-scheme: dark;
+  }
+
+  .panel,
+  .section-title,
+  .field + .check-row,
+  .check-row + .check-row,
+  .check-row + .field {
+    border-color: #484848;
+  }
+
+  .section-title,
+  .depth-grid,
+  .field input[type="number"],
+  .field select {
+    background: #303030;
+    color: #eeeeee;
+  }
+
+  .depth-grid button.is-active,
+  .depth-grid button:hover {
+    background: #454545;
+    color: #ffffff;
+  }
+
+  header p,
+  small,
+  footer {
+    color: #c1c1c1;
+  }
+
+  .save-status {
+    color: #79e4c5;
+  }
+
+  .save-status.is-error {
+    color: #ff9b91;
+  }
+}

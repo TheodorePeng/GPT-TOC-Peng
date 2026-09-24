@@ -89,4 +89,25 @@ describe("PanelDisclosureController", () => {
     vi.advanceTimersByTime(1);
     expect(controller.presentation).toBe("rail");
   });
+
+  it("keeps a temporary preview open during a drag without pinning it", () => {
+    const modes: string[] = [];
+    const controller = new PanelDisclosureController({
+      mode: "rail",
+      hoverEnabled: true,
+      onModeChange: (mode) => modes.push(mode)
+    });
+    controller.pointerEnter();
+    vi.advanceTimersByTime(120);
+    controller.beginInteraction();
+    controller.pointerLeave();
+    vi.advanceTimersByTime(500);
+    expect(controller.presentation).toBe("peek");
+    expect(modes).toEqual([]);
+
+    controller.endInteraction();
+    vi.advanceTimersByTime(280);
+    expect(controller.presentation).toBe("rail");
+    expect(modes).toEqual([]);
+  });
 });

@@ -17,6 +17,7 @@ export class PanelDisclosureController {
   private peeking = false;
   private pointerInside = false;
   private focusInside = false;
+  private interactionInProgress = false;
   private enterTimer: number | null = null;
   private leaveTimer: number | null = null;
   private readonly onModeChange?: (mode: PanelMode) => void;
@@ -91,6 +92,16 @@ export class PanelDisclosureController {
     this.schedulePeekClose();
   }
 
+  beginInteraction(): void {
+    this.interactionInProgress = true;
+    this.clearLeaveTimer();
+  }
+
+  endInteraction(): void {
+    this.interactionInProgress = false;
+    this.schedulePeekClose();
+  }
+
   escape(): void {
     if (this.mode === "rail") {
       this.closePeek();
@@ -117,6 +128,7 @@ export class PanelDisclosureController {
     if (
       this.pointerInside ||
       this.focusInside ||
+      this.interactionInProgress ||
       this.mode !== "rail" ||
       !this.peeking ||
       this.leaveTimer !== null

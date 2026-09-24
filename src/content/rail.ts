@@ -31,8 +31,9 @@ export const getRailMarkers = ({
   currentHeadingId,
   maxDepth
 }: RailMarkerInput): RailMarker[] => {
-  const outline =
-    outlines.find((item) => item.id === currentAnswerId) ?? outlines.at(-1);
+  const outline = currentAnswerId === null
+    ? outlines.at(-1)
+    : outlines.find((item) => item.id === currentAnswerId);
 
   if (!outline) {
     return [];

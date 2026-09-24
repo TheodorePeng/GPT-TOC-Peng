@@ -27,6 +27,7 @@ export const DEFAULT_SETTINGS: TocSettings = {
 };
 
 const SETTINGS_KEY = "gptReaderSettings";
+let saveQueue: Promise<void> = Promise.resolve();
 
 type SettingsPatch = Partial<TocSettings>;
 
@@ -100,14 +101,15 @@ export const getSettings = async (): Promise<TocSettings> => {
   return normalizeSettings(stored[SETTINGS_KEY]);
 };
 
-export const saveSettings = async (settings: TocSettings): Promise<void> => {
+export const saveSettings = (settings: TocSettings): Promise<void> => {
   if (!canUseChromeStorage()) {
-    return;
+    return Promise.resolve();
   }
 
-  await chrome.storage.sync.set({
-    [SETTINGS_KEY]: normalizeSettings(settings)
-  });
+  const normalized = normalizeSettings(settings);
+  const write = saveQueue.then(() => chrome.storage.sync.set({ [SETTINGS_KEY]: normalized }));
+  saveQueue = write.catch(() => undefined);
+  return write;
 };
 
 export const mergeSettings = (current: TocSettings, patch: SettingsPatch): TocSettings =>

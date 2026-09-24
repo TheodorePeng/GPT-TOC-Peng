@@ -4,6 +4,7 @@ import {
   getSettings,
   mergeSettings,
   normalizeHeadingScrollPositionPercent,
+  saveSettings,
   subscribeSettings
 } from "./settings";
 
@@ -17,7 +18,7 @@ type StorageListener = (
 const installChromeStorage = (storedValue?: unknown) => {
   const listeners = new Set<StorageListener>();
   const get = vi.fn(async () => ({ [SETTINGS_KEY]: storedValue }));
-  const set = vi.fn(async () => undefined);
+  const set = vi.fn(async (_items: Record<string, unknown>): Promise<void> => undefined);
 
   (globalThis as unknown as { chrome: unknown }).chrome = {
     storage: {
@@ -34,6 +35,7 @@ const installChromeStorage = (storedValue?: unknown) => {
   };
 
   return {
+    set,
     emit: (newValue: unknown, areaName = "sync") => {
       listeners.forEach((listener) =>
         listener({ [SETTINGS_KEY]: { newValue } }, areaName)
@@ -145,5 +147,20 @@ describe("interaction settings compatibility", () => {
     );
 
     unsubscribe();
+  });
+
+  it("serializes rapid saves and keeps the newest setting last", async () => {
+    const storage = installChromeStorage();
+    let releaseFirst: (() => void) | undefined;
+    storage.set.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    }));
+    const first = saveSettings(mergeSettings(DEFAULT_SETTINGS, { headingScrollPositionPercent: 0 }));
+    const second = saveSettings(mergeSettings(DEFAULT_SETTINGS, { headingScrollPositionPercent: 50 }));
+    await vi.waitFor(() => expect(storage.set).toHaveBeenCalledTimes(1));
+    releaseFirst?.();
+    await Promise.all([first, second]);
+    expect(storage.set).toHaveBeenCalledTimes(2);
+    expect((storage.set.mock.calls[1][0][SETTINGS_KEY] as typeof DEFAULT_SETTINGS).headingScrollPositionPercent).toBe(50);
   });
 });

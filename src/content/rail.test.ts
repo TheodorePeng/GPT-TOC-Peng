@@ -45,20 +45,18 @@ describe("current-answer rail markers", () => {
     ]);
   });
 
-  it("falls back to the latest answer when the current answer is unavailable", () => {
+  it("shows no stale markers when the current answer has no headings", () => {
     const outlines = outlinesFrom(`
       <article data-message-author-role="assistant"><h1>Earlier</h1></article>
       <article data-message-author-role="assistant"><h1>Latest</h1></article>
     `);
 
-    expect(
-      getRailMarkers({
-        outlines,
-        currentAnswerId: "missing-answer",
-        currentHeadingId: null,
-        maxDepth: 6
-      }).map((marker) => marker.answerId)
-    ).toEqual([outlines[1].id]);
+    expect(getRailMarkers({
+      outlines,
+      currentAnswerId: "headingless-answer",
+      currentHeadingId: null,
+      maxDepth: 6
+    })).toEqual([]);
   });
 
   it("maps relative H1-H6 to the fixed descending line widths", () => {

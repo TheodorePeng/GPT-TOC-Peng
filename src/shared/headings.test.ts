@@ -81,26 +81,45 @@ describe("heading outline extraction", () => {
     expect(otherAnswerVisible.map((heading) => heading.text)).toEqual(["回答二顶层"]);
   });
 
-  it("rewrites stale DOM ids so heading targets stay unique after rescans", () => {
+  it("uses stable message ids across answer reordering and DOM replacement", () => {
     const outlines = extractAnswerOutlines(
       renderAnswers(`
-        <article data-message-author-role="assistant" data-gpt-reader-answer-id="old-answer">
+        <article data-message-author-role="assistant" data-message-id="message-a" data-gpt-reader-answer-id="old-answer">
           <h1 data-gpt-reader-heading-id="old-heading">旧回答标题</h1>
         </article>
-        <article data-message-author-role="assistant" data-gpt-reader-answer-id="old-answer">
+        <article data-message-author-role="assistant" data-message-id="message-b" data-gpt-reader-answer-id="old-answer">
           <h1 data-gpt-reader-heading-id="old-heading">新回答标题</h1>
         </article>
       `)
     );
 
     expect(outlines.map((outline) => outline.id)).toEqual([
-      "gpt-reader-answer-1",
-      "gpt-reader-answer-2"
+      "gpt-reader-answer-message-a",
+      "gpt-reader-answer-message-b"
     ]);
     expect(outlines.flatMap((outline) => outline.headings.map((heading) => heading.id))).toEqual([
-      "gpt-reader-heading-1-1",
-      "gpt-reader-heading-2-1"
+      "gpt-reader-answer-message-a-heading-1",
+      "gpt-reader-answer-message-b-heading-1"
     ]);
+
+    const reordered = extractAnswerOutlines(
+      renderAnswers(`
+        <article data-message-author-role="assistant" data-message-id="message-b"><h1>新回答标题</h1></article>
+        <article data-message-author-role="assistant" data-message-id="message-a"><h1>旧回答标题</h1></article>
+      `)
+    );
+    expect(reordered.map((outline) => outline.id)).toEqual([outlines[1].id, outlines[0].id]);
+    expect(reordered[1].headings[0].id).toBe(outlines[0].headings[0].id);
+  });
+
+  it("keeps a session-only fallback id for the same message element", () => {
+    const [element] = renderAnswers(`
+      <article data-message-author-role="assistant"><h2>First</h2></article>
+    `);
+    const firstId = extractAnswerOutlines([element])[0].id;
+    expect(extractAnswerOutlines([element])[0].id).toBe(firstId);
+    const replacement = element.cloneNode(true) as Element;
+    expect(extractAnswerOutlines([replacement])[0].id).not.toBe(firstId);
   });
 
   it("ignores headings hidden by an ancestor", () => {
@@ -117,5 +136,26 @@ describe("heading outline extraction", () => {
 
     expect(outlines).toHaveLength(1);
     expect(outlines[0].headings.map((heading) => heading.text)).toEqual(["Visible heading"]);
+  });
+
+  it("indexes Writing Block headings without changing the host editor DOM", () => {
+    const [answer] = renderAnswers(`
+      <article data-message-author-role="assistant" data-message-id="writing-block">
+        <div data-testid="writing-block-container">
+          <div class="ProseMirror" contenteditable="true">
+            <h1>Document title</h1><h2>Chapter one</h2><h2>Chapter two</h2>
+          </div>
+        </div>
+      </article>
+    `);
+    const originalMarkup = answer.outerHTML;
+
+    const first = extractAnswerOutlines([answer]);
+    const second = extractAnswerOutlines([answer]);
+
+    expect(first[0].headings.map((heading) => heading.id)).toEqual(
+      second[0].headings.map((heading) => heading.id)
+    );
+    expect(answer.outerHTML).toBe(originalMarkup);
   });
 });

@@ -160,6 +160,7 @@ export const createPopupMarkup = (settings: TocSettings): string => `
     <footer>
       <span class="status-dot"></span>
       <span>${settings.enabled ? "已在 ChatGPT 页面启用" : "目录已关闭"}</span>
+      <span class="save-status" data-settings-save-status role="status" aria-live="polite">已保存</span>
     </footer>
   </section>
 `;

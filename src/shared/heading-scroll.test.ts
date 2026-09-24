@@ -43,6 +43,8 @@ describe("heading scroll geometry", () => {
 
 describe("heading scroll container adapter", () => {
   afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
     document.body.replaceChildren();
     vi.restoreAllMocks();
   });
@@ -62,52 +64,54 @@ describe("heading scroll container adapter", () => {
     expect(findNearestVerticalScrollContainer(heading)).toBe(inner);
   });
 
-  it("defers the percentage adjustment until after the initial start scroll", () => {
+  it("reacquires a replaced heading and lands at distinct 0, 50, and 100 percent positions", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("innerHeight", 900);
     const scroller = document.createElement("div");
     const heading = document.createElement("h2");
     scroller.style.overflowY = "auto";
-    setSize(scroller, 900, 1800);
+    setSize(scroller, 900, 5000);
     scroller.append(heading);
     document.body.append(scroller);
 
-    const scrollIntoView = vi.fn();
-    const scrollBy = vi.fn();
+    const replacement = document.createElement("h2");
+    const scrollIntoView = vi.fn(() => {
+      scroller.scrollTop = 800;
+      heading.replaceWith(replacement);
+    });
+    const scrollBy = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop += top ?? 0;
+    });
     Object.defineProperty(heading, "scrollIntoView", { configurable: true, value: scrollIntoView });
     Object.defineProperty(scroller, "scrollBy", { configurable: true, value: scrollBy });
-    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue({
-      top: 10,
-      bottom: 910,
-      left: 0,
-      right: 500,
-      width: 500,
-      height: 900,
-      x: 0,
-      y: 10,
-      toJSON: () => ({})
-    });
-    vi.spyOn(heading, "getBoundingClientRect").mockReturnValue({
-      top: 106,
-      bottom: 146,
-      left: 0,
-      right: 400,
-      width: 400,
-      height: 40,
-      x: 0,
-      y: 106,
-      toJSON: () => ({})
-    });
-    const frames: FrameRequestCallback[] = [];
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-      frames.push(callback);
-      return frames.length;
-    });
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(
+      DOMRect.fromRect({ y: 0, width: 500, height: 900 })
+    );
+    vi.spyOn(replacement, "getBoundingClientRect").mockImplementation(() =>
+      DOMRect.fromRect({ y: 96 - (scroller.scrollTop - 800), width: 400, height: 40 })
+    );
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+      window.setTimeout(() => callback(performance.now()), 16)
+    );
 
-    scrollHeadingToPercent(heading, 50);
+    Object.defineProperty(replacement, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(() => { scroller.scrollTop = 800; })
+    });
+    for (const [percent, expectedTop] of [[0, 96], [50, 478], [100, 860]]) {
+      const landing = scrollHeadingToPercent(heading, percent, {
+        resolveHeading: () => scroller.querySelector("h2")
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await landing;
 
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto", block: "start" });
-    expect(scrollBy).not.toHaveBeenCalled();
-    frames[0](0);
-    expect(scrollBy).toHaveBeenCalledWith({ behavior: "auto", top: -382 });
+      expect(result.status).toBe("reached");
+      expect(result.element).toBe(replacement);
+      expect(result.actualTop).toBeCloseTo(expectedTop, 0);
+      expect(Math.abs((result.actualTop ?? 0) - (result.targetTop ?? 0))).toBeLessThan(12);
+    }
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "instant", block: "start" });
+    expect(scrollBy).toHaveBeenCalled();
   });
 
   it("safely ignores a heading removed before the deferred adjustment", () => {

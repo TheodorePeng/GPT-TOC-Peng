@@ -1,6 +1,6 @@
 {
   "name": "gpt-toc-peng",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "A synchronized, collapsible table of contents for long ChatGPT answers.",
   "private": true,
   "type": "module",

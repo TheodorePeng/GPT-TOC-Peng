@@ -1,5 +1,4 @@
 import type { HeadingDepth, TocSettings } from "./settings";
-import { HEADING_SCROLL_TOP_INSET_PX } from "./heading-scroll";
 
 export type HeadingInfo = {
   id: string;
@@ -20,7 +19,9 @@ export type AnswerOutline = {
   minDepth: HeadingDepth;
 };
 
-const headingSelector = "h1,h2,h3,h4,h5,h6";
+export const headingSelector = "h1,h2,h3,h4,h5,h6";
+const fallbackAnswerIds = new WeakMap<Element, string>();
+let nextFallbackAnswerId = 1;
 
 const getHeadingDepth = (element: Element): HeadingDepth | null => {
   const depth = Number(element.tagName.slice(1));
@@ -44,7 +45,7 @@ const hasLayoutBox = (element: HTMLElement): boolean => {
   return rect.width > 0 || rect.height > 0;
 };
 
-const isVisibleHeading = (element: HTMLElement): boolean => {
+export const isVisibleHeading = (element: HTMLElement): boolean => {
   if (element.hidden || element.getAttribute("aria-hidden") === "true") {
     return false;
   }
@@ -66,28 +67,27 @@ const isVisibleHeading = (element: HTMLElement): boolean => {
   return hasLayoutBox(element);
 };
 
-const ensureAnswerId = (element: Element, answerIndex: number): string => {
-  const htmlElement = element as HTMLElement;
-  const id = `gpt-reader-answer-${answerIndex + 1}`;
-  htmlElement.dataset.gptReaderAnswerId = id;
+export const ensureAnswerId = (element: Element): string => {
+  const messageId = element.getAttribute("data-message-id")?.trim();
+  let id: string;
+  if (messageId) {
+    id = `gpt-reader-answer-${encodeURIComponent(messageId)}`;
+  } else {
+    id = fallbackAnswerIds.get(element) ?? `gpt-reader-answer-local-${nextFallbackAnswerId++}`;
+    fallbackAnswerIds.set(element, id);
+  }
   return id;
 };
 
 const ensureHeadingId = (
-  heading: HTMLElement,
-  answerIndex: number,
+  answerId: string,
   headingIndex: number
-): string => {
-  const id = `gpt-reader-heading-${answerIndex + 1}-${headingIndex + 1}`;
-  heading.dataset.gptReaderHeadingId = id;
-  heading.style.scrollMarginTop = `${HEADING_SCROLL_TOP_INSET_PX}px`;
-  return id;
-};
+): string => `${answerId}-heading-${headingIndex + 1}`;
 
 export const extractAnswerOutlines = (answerElements: Element[]): AnswerOutline[] =>
   answerElements
     .map((answerElement, answerIndex): AnswerOutline | null => {
-      const answerId = ensureAnswerId(answerElement, answerIndex);
+      const answerId = ensureAnswerId(answerElement);
       const headings = Array.from(answerElement.querySelectorAll<HTMLElement>(headingSelector))
         .map((heading, headingIndex): HeadingInfo | null => {
           const text = heading.textContent?.replace(/\s+/g, " ").trim() ?? "";
@@ -98,7 +98,7 @@ export const extractAnswerOutlines = (answerElements: Element[]): AnswerOutline[
           }
 
           return {
-            id: ensureHeadingId(heading, answerIndex, headingIndex),
+            id: ensureHeadingId(answerId, headingIndex),
             text,
             depth,
             relativeDepth: depth,
