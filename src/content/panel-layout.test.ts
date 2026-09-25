@@ -3,6 +3,7 @@ import {
   constrainPanelAnchorLeft,
   getPanelLeft,
   getRenderedPanelLayout,
+  getSmartPanelHeight,
   getViewportPanelLayout,
   getResizedPanelWidth,
   normalizeCenterRatio,
@@ -12,6 +13,11 @@ import {
 } from "./panel-layout";
 
 describe("panel expansion layout", () => {
+  it("shrinks to short content and caps long lists without a 320px floor", () => {
+    expect(getSmartPanelHeight(1000, 65, 82, 56)).toBe(138);
+    expect(getSmartPanelHeight(1000, 65, 1800, 56)).toBe(650);
+    expect(getSmartPanelHeight(600, 30, 0, 56)).toBe(72);
+  });
   it("normalizes missing and invalid stored directions to right", () => {
     expect(normalizePanelExpandDirection(undefined)).toBe("right");
     expect(normalizePanelExpandDirection("up")).toBe("right");

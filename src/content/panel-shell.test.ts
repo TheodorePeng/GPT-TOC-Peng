@@ -24,6 +24,7 @@ describe("compact panel shell", () => {
       "取消固定并收起目录"
     ]);
     expect(root.querySelector("[data-gpt-reader-drag] svg")).toBeNull();
+    expect(root.querySelector(".gpt-reader-rail")).toBeNull();
     expect(root.querySelector("[data-gpt-reader-pin]")?.getAttribute("aria-pressed")).toBe("true");
   });
 
@@ -48,9 +49,12 @@ describe("compact panel shell", () => {
     expect(root.querySelector("[data-gpt-reader-wrap-titles]")).not.toBeNull();
     expect(root.querySelector("[data-gpt-reader-height-mode]")).not.toBeNull();
     expect(root.querySelector("[data-gpt-reader-height-percent]")).not.toBeNull();
+    expect(root.querySelector("[data-gpt-reader-before-count]")).not.toBeNull();
+    expect(root.querySelector("[data-gpt-reader-after-count]")).not.toBeNull();
     expect(root.querySelector("[data-gpt-reader-scroll-position]")).toBeNull();
+    expect(root.querySelector("[data-gpt-reader-max-rounds]")).toBeNull();
     expect(root.querySelector("[data-gpt-reader-settings]")?.textContent).toContain(
-      "悬浮展开、跳转位置和正文高亮可在扩展图标弹窗中设置。"
+      "更多设置请点击浏览器扩展图标。"
     );
   });
 

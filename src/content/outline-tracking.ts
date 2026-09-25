@@ -5,6 +5,7 @@ import {
   type AnswerOutline,
   type HeadingInfo
 } from "../shared/headings";
+import { getMessageId } from "../shared/chatgpt-dom";
 
 export type AnswerSnapshot = {
   id: string;
@@ -20,7 +21,7 @@ export const snapshotAnswers = (elements: HTMLElement[]): AnswerSnapshot[] =>
     return {
       id: ensureAnswerId(element),
       element,
-      messageId: element.getAttribute("data-message-id"),
+      messageId: getMessageId(element),
       headingElements,
       visibleHeadingElements: headingElements.filter(isVisibleHeading)
     };
@@ -38,9 +39,13 @@ export const answerSnapshotsChanged = (
 
   return snapshots.some((snapshot, index) => {
     const element = elements[index];
-    if (snapshot.element !== element || snapshot.messageId !== element.getAttribute("data-message-id")) {
+    if (snapshot.element !== element || snapshot.messageId !== getMessageId(element)) {
       return true;
     }
+
+    // DOM mutations invalidate other answers. Scroll-time checks only need the
+    // active answer's headings; visiting every long Writing Block is costly.
+    if (snapshot.id !== activeAnswerId) return false;
 
     const headings = Array.from(element.querySelectorAll<HTMLElement>(headingSelector));
     if (
@@ -66,6 +71,14 @@ export const findAnswerAtAnchor = (
   previousAnswerId: string | null = null,
   hysteresisPx = 32
 ): AnswerSnapshot | null => {
+  const previous = snapshots.find((item) => item.id === previousAnswerId);
+  if (previous?.element.isConnected) {
+    const rect = previous.element.getBoundingClientRect();
+    if (rect.height > 0 && rect.top + hysteresisPx <= anchorY &&
+      rect.bottom - hysteresisPx >= anchorY) {
+      return previous;
+    }
+  }
   let preceding: AnswerSnapshot | null = null;
   let following: AnswerSnapshot | null = null;
 
@@ -75,7 +88,6 @@ export const findAnswerAtAnchor = (
       continue;
     }
     if (rect.top <= anchorY && rect.bottom >= anchorY) {
-      const previous = snapshots.find((item) => item.id === previousAnswerId);
       if (previous && previous !== snapshot && previous.element.isConnected) {
         const previousRect = previous.element.getBoundingClientRect();
         const movingForward = snapshots.indexOf(snapshot) > snapshots.indexOf(previous);
@@ -98,7 +110,6 @@ export const findAnswerAtAnchor = (
     }
   }
 
-  const previous = snapshots.find((snapshot) => snapshot.id === previousAnswerId);
   if (previous?.element.isConnected) {
     const rect = previous.element.getBoundingClientRect();
     if (rect.top <= anchorY + hysteresisPx && rect.bottom >= anchorY - hysteresisPx) {

@@ -1,5 +1,5 @@
 export type PanelExpandDirection = "right" | "left";
-export type PanelHeightMode = "fixed" | "viewport";
+export type PanelHeightMode = "smart" | "fixed" | "viewport";
 
 export type PanelPosition = { left: number; top: number };
 
@@ -11,6 +11,18 @@ export const normalizeHeightPercent = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value)
     ? Math.min(MAX_HEIGHT_PERCENT, Math.max(MIN_HEIGHT_PERCENT, Math.round(value)))
     : DEFAULT_HEIGHT_PERCENT;
+
+export const getSmartPanelHeight = (
+  viewportHeight: number,
+  heightPercent: number,
+  contentHeight: number,
+  chromeHeight: number,
+  edgeMargin = 8
+): number => {
+  const cap = Math.max(0, Math.min(viewportHeight - edgeMargin * 2,
+    Math.round(viewportHeight * normalizeHeightPercent(heightPercent) / 100)));
+  return Math.min(cap, Math.max(72, Math.ceil(contentHeight + chromeHeight)));
+};
 
 export const normalizeCenterRatio = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value)

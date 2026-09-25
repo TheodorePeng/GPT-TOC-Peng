@@ -39,6 +39,23 @@ await build({
     outDir: dist,
     emptyOutDir: false,
     sourcemap: false,
+    lib: {
+      entry: path.join(root, "src/content/page-message-time.ts"),
+      name: "GptTocPengMessageTime",
+      formats: ["iife"],
+      fileName: () => "page-message-time.js"
+    }
+  }
+});
+
+await build({
+  root,
+  configFile: false,
+  publicDir: "public",
+  build: {
+    outDir: dist,
+    emptyOutDir: false,
+    sourcemap: false,
     rollupOptions: {
       input: path.join(root, "popup.html"),
       output: {

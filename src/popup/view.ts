@@ -1,15 +1,11 @@
-import {
-  type TargetHighlightDurationMs,
-  type TocSettings,
-  headingDepths
-} from "../shared/settings";
+import { type TocSettings, headingDepths } from "../shared/settings";
 
 export const createPopupMarkup = (settings: TocSettings): string => `
   <section class="popup-shell">
     <header>
       <div>
         <p>GPT TOC Peng</p>
-        <h1>ChatGPT 回答目录设置</h1>
+        <h1>回答目录设置</h1>
       </div>
       <label class="switch" title="启用目录">
         <input type="checkbox" data-setting-enabled ${settings.enabled ? "checked" : ""} />
@@ -17,8 +13,12 @@ export const createPopupMarkup = (settings: TocSettings): string => `
       </label>
     </header>
 
-    <section class="panel" aria-labelledby="toc-content-settings">
-      <h2 class="section-title" id="toc-content-settings">目录内容</h2>
+    <div class="popup-tabs" role="tablist" aria-label="设置分类">
+      <button type="button" role="tab" id="popup-tab-toc" aria-controls="popup-panel-toc" aria-selected="true" tabindex="0" data-setting-tab="toc">目录</button>
+      <button type="button" role="tab" id="popup-tab-appearance" aria-controls="popup-panel-appearance" aria-selected="false" tabindex="-1" data-setting-tab="appearance">外观与跳转</button>
+    </div>
+    <div class="popup-tab-panel" role="tabpanel" id="popup-panel-toc" aria-labelledby="popup-tab-toc" data-setting-panel="toc">
+    <section class="panel" aria-label="目录内容">
       <div class="field">
         <div>
           <strong>目录最大层级</strong>
@@ -51,20 +51,16 @@ export const createPopupMarkup = (settings: TocSettings): string => `
         } />
       </label>
 
-      <label class="field">
+      <div class="field">
         <div>
-          <strong>保留最近问答轮数</strong>
-          <small>0 表示不限制；长会话建议 3-5 轮。</small>
+          <strong>当前回答上下显示数量</strong>
+          <small>分别显示有标题的回答；0 表示该侧不显示邻居。仅影响目录。</small>
         </div>
-        <input
-          type="number"
-          min="0"
-          max="50"
-          step="1"
-          data-setting-max-rounds
-          value="${settings.maxVisibleRounds}"
-        />
-      </label>
+        <div class="neighbor-counts">
+          <label>上方 <input type="number" min="0" max="20" step="1" data-setting-before-count value="${settings.visibleAnswersBeforeCurrent}" /></label>
+          <label>下方 <input type="number" min="0" max="20" step="1" data-setting-after-count value="${settings.visibleAnswersAfterCurrent}" /></label>
+        </div>
+      </div>
 
       <label class="check-row">
         <span>
@@ -77,8 +73,34 @@ export const createPopupMarkup = (settings: TocSettings): string => `
       </label>
     </section>
 
-    <section class="panel" aria-labelledby="toc-interaction-settings">
-      <h2 class="section-title" id="toc-interaction-settings">交互与高亮</h2>
+    <details class="panel advanced-panel">
+      <summary>高级设置</summary>
+      <label class="field">
+        <div>
+          <strong>限制正文历史轮次</strong>
+          <small>会隐藏 ChatGPT 正文中的旧轮次；0 表示不限制。</small>
+        </div>
+        <input type="number" min="0" max="50" step="1" data-setting-max-rounds value="${settings.maxVisibleRounds}" />
+      </label>
+    </details>
+    </div>
+
+    <div class="popup-tab-panel" role="tabpanel" id="popup-panel-appearance" aria-labelledby="popup-tab-appearance" data-setting-panel="appearance" hidden>
+    <section class="panel" aria-label="外观与跳转">
+      <div class="field opacity-field">
+        <div>
+          <strong>内容背景不透明度</strong>
+          <small>包括当前回答的绿色背景；文字与定位色条保持清晰。</small>
+        </div>
+        <div class="opacity-controls">
+          <input type="range" min="0" max="100" step="1" value="${settings.panelSurfaceOpacityPercent ?? 92}" data-setting-opacity-range aria-label="内容背景不透明度" />
+          <span class="opacity-number"><input type="number" min="0" max="100" step="1" value="${settings.panelSurfaceOpacityPercent ?? 92}" data-setting-opacity-number aria-label="内容背景不透明度百分比" /><span aria-hidden="true">%</span></span>
+        </div>
+        <div class="opacity-default-row">
+          <small>${settings.panelSurfaceOpacityPercent === null ? "跟随主题：浅色 92%、深色 94%" : `自定义：${settings.panelSurfaceOpacityPercent}%`}</small>
+          <button type="button" data-setting-opacity-reset ${settings.panelSurfaceOpacityPercent === null ? "disabled" : ""}>恢复主题默认</button>
+        </div>
+      </div>
       <label class="check-row">
         <span>
           <strong>悬浮竖条自动展开</strong>
@@ -126,36 +148,25 @@ export const createPopupMarkup = (settings: TocSettings): string => `
 
       <label class="check-row">
         <span>
-          <strong>点击定位后高亮正文标题</strong>
-          <small>跳转后短暂标出目标标题，便于确认位置。</small>
+          <strong>点击跳转后高亮目标</strong>
+          <small>适用于目录标题与问答块中的提问。</small>
         </span>
         <input type="checkbox" data-setting-target-highlight ${
           settings.targetHighlightEnabled ? "checked" : ""
         } />
       </label>
 
-      <label class="field">
+      <div class="field">
         <div>
           <strong>高亮持续时间</strong>
-          <small>关闭正文高亮后此选项不可用。</small>
+          <small>可输入 0.10–10.00 秒，精确到 0.01 秒。</small>
         </div>
-        <select data-setting-highlight-duration ${
-          settings.targetHighlightEnabled ? "" : "disabled"
-        }>
-          ${([800, 1500, 3000] as TargetHighlightDurationMs[])
-            .map(
-              (duration) => `
-                <option value="${duration}" ${
-                  duration === settings.targetHighlightDurationMs ? "selected" : ""
-                }>
-                  ${duration / 1000} 秒
-                </option>
-              `
-            )
-            .join("")}
-        </select>
-      </label>
+        <div class="duration-controls">
+          <span class="duration-number"><input type="number" min="0.1" max="10" step="0.01" value="${settings.targetHighlightDurationMs / 1000}" data-setting-highlight-duration aria-label="高亮持续秒数" ${settings.targetHighlightEnabled ? "" : "disabled"} /><span aria-hidden="true">秒</span></span>
+        </div>
+      </div>
     </section>
+    </div>
 
     <footer>
       <span class="status-dot"></span>

@@ -66,7 +66,7 @@ const pause = (durationMs: number): Promise<void> =>
 const getScrollGeometry = (
   heading: HTMLElement,
   percent: number
-): { container: HTMLElement | null; targetTop: number; actualTop: number; scrollTop: number; maxScrollTop: number } => {
+): { container: HTMLElement | null; targetTop: number; actualTop: number; visibleTop: number; visibleBottom: number; scrollTop: number; minScrollTop: number; maxScrollTop: number } => {
   const view = heading.ownerDocument.defaultView;
   const container = findNearestVerticalScrollContainer(heading);
   const rect = container?.getBoundingClientRect();
@@ -76,7 +76,8 @@ const getScrollGeometry = (
     : view?.innerHeight ?? 0;
   const headingRect = heading.getBoundingClientRect();
   const scrollTop = container?.scrollTop ?? view?.scrollY ?? 0;
-  const maxScrollTop = container
+  const reverse = container && view?.getComputedStyle(container).flexDirection === "column-reverse";
+  const scrollRange = container
     ? Math.max(0, container.scrollHeight - container.clientHeight)
     : Math.max(0, heading.ownerDocument.documentElement.scrollHeight - (view?.innerHeight ?? 0));
 
@@ -90,9 +91,30 @@ const getScrollGeometry = (
       percent
     }),
     actualTop: headingRect.top,
+    visibleTop,
+    visibleBottom,
     scrollTop,
-    maxScrollTop
+    minScrollTop: reverse ? -scrollRange : 0,
+    maxScrollTop: reverse ? 0 : scrollRange
   };
+};
+
+const moveTowardsTarget = (geometry: ReturnType<typeof getScrollGeometry>): number => {
+  const destination = Math.min(geometry.maxScrollTop,
+    Math.max(geometry.minScrollTop, geometry.scrollTop + geometry.actualTop - geometry.targetTop));
+  const delta = destination - geometry.scrollTop;
+  if (Math.abs(delta) < 1) return 0;
+  if (geometry.container) geometry.container.scrollBy({ behavior: "instant", top: delta });
+  else window.scrollBy({ behavior: "instant", top: delta });
+  return delta;
+};
+
+export const scrollElementNearViewport = (element: HTMLElement, percent = 0): void => {
+  if (!findNearestVerticalScrollContainer(element)) {
+    element.scrollIntoView({ behavior: "instant", block: percent >= 50 ? "center" : "start" });
+    return;
+  }
+  moveTowardsTarget(getScrollGeometry(element, percent));
 };
 
 export const scrollHeadingToPercent = async (
@@ -105,8 +127,12 @@ export const scrollHeadingToPercent = async (
   if (!initial) {
     return { status: "missing", element: null, targetTop: null, actualTop: null };
   }
+  if (!findNearestVerticalScrollContainer(initial)) {
+    initial.scrollIntoView({ behavior: "instant", block: "start" });
+    await nextFrame();
+    await pause(80);
+  }
 
-  initial.scrollIntoView({ behavior: "instant", block: "start" });
   const deadline = performance.now() + 2400;
   let corrections = 0;
   let stableSince: number | null = null;
@@ -116,8 +142,6 @@ export const scrollHeadingToPercent = async (
   };
 
   while (performance.now() < deadline) {
-    await nextFrame();
-    await pause(80);
     if (options.isCancelled?.()) {
       return { status: "cancelled", element: null, targetTop: null, actualTop: null };
     }
@@ -125,6 +149,8 @@ export const scrollHeadingToPercent = async (
     const current = resolveHeading();
     if (!current?.isConnected) {
       stableSince = null;
+      await nextFrame();
+      await pause(80);
       continue;
     }
 
@@ -142,28 +168,19 @@ export const scrollHeadingToPercent = async (
       if (now - stableSince >= 320) {
         return lastResult;
       }
-      continue;
-    }
-
-    stableSince = null;
-    const destination = Math.min(
-      geometry.maxScrollTop,
-      Math.max(0, geometry.scrollTop + delta)
-    );
-    const appliedDelta = destination - geometry.scrollTop;
-    if (Math.abs(appliedDelta) < 1) {
-      return { ...lastResult, status: "clamped" };
-    }
-    if (corrections >= 4) {
-      return { ...lastResult, status: "unsettled" };
-    }
-
-    if (geometry.container) {
-      geometry.container.scrollBy({ behavior: "instant", top: appliedDelta });
     } else {
-      current.ownerDocument.defaultView?.scrollBy({ behavior: "instant", top: appliedDelta });
+      stableSince = null;
+      if (corrections >= 4) return { ...lastResult, status: "unsettled" };
+      const appliedDelta = moveTowardsTarget(geometry);
+      if (Math.abs(appliedDelta) < 1) {
+        const visible = geometry.actualTop < geometry.visibleBottom &&
+          geometry.actualTop + current.getBoundingClientRect().height > geometry.visibleTop;
+        return { ...lastResult, status: !geometry.container || visible ? "clamped" : "unsettled" };
+      }
+      corrections += 1;
     }
-    corrections += 1;
+    await nextFrame();
+    await pause(80);
   }
 
   return lastResult.element && lastError > 12

@@ -73,32 +73,29 @@ describe("heading scroll container adapter", () => {
     setSize(scroller, 900, 5000);
     scroller.append(heading);
     document.body.append(scroller);
+    scroller.scrollTop = 800;
 
     const replacement = document.createElement("h2");
-    const scrollIntoView = vi.fn(() => {
-      scroller.scrollTop = 800;
-      heading.replaceWith(replacement);
-    });
     const scrollBy = vi.fn(({ top }: ScrollToOptions) => {
       scroller.scrollTop += top ?? 0;
+      if (heading.isConnected) heading.replaceWith(replacement);
     });
-    Object.defineProperty(heading, "scrollIntoView", { configurable: true, value: scrollIntoView });
     Object.defineProperty(scroller, "scrollBy", { configurable: true, value: scrollBy });
     vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(
       DOMRect.fromRect({ y: 0, width: 500, height: 900 })
     );
+    vi.spyOn(heading, "getBoundingClientRect").mockImplementation(() =>
+      DOMRect.fromRect({ y: 500 - (scroller.scrollTop - 800), width: 400, height: 40 })
+    );
     vi.spyOn(replacement, "getBoundingClientRect").mockImplementation(() =>
-      DOMRect.fromRect({ y: 96 - (scroller.scrollTop - 800), width: 400, height: 40 })
+      DOMRect.fromRect({ y: 500 - (scroller.scrollTop - 800), width: 400, height: 40 })
     );
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
       window.setTimeout(() => callback(performance.now()), 16)
     );
 
-    Object.defineProperty(replacement, "scrollIntoView", {
-      configurable: true,
-      value: vi.fn(() => { scroller.scrollTop = 800; })
-    });
     for (const [percent, expectedTop] of [[0, 96], [50, 478], [100, 860]]) {
+      scroller.scrollTop = 800;
       const landing = scrollHeadingToPercent(heading, percent, {
         resolveHeading: () => scroller.querySelector("h2")
       });
@@ -110,8 +107,45 @@ describe("heading scroll container adapter", () => {
       expect(result.actualTop).toBeCloseTo(expectedTop, 0);
       expect(Math.abs((result.actualTop ?? 0) - (result.targetTop ?? 0))).toBeLessThan(12);
     }
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "instant", block: "start" });
+    expect(heading.isConnected).toBe(false);
     expect(scrollBy).toHaveBeenCalled();
+  });
+
+  it("uses the negative scroll range of ChatGPT's column-reverse scroller", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("innerHeight", 900);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+      window.setTimeout(() => callback(performance.now()), 16));
+    const scroller = document.createElement("div");
+    scroller.style.overflowY = "auto";
+    scroller.style.display = "flex";
+    scroller.style.flexDirection = "column-reverse";
+    setSize(scroller, 900, 5000);
+    const heading = document.createElement("h2");
+    scroller.append(heading);
+    document.body.append(scroller);
+    const scrollIntoView = vi.fn();
+    heading.scrollIntoView = scrollIntoView;
+    const scrollBy = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Math.max(-4100, Math.min(0, scroller.scrollTop + (top ?? 0)));
+    });
+    Object.defineProperty(scroller, "scrollBy", { configurable: true, value: scrollBy });
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(
+      DOMRect.fromRect({ y: 0, width: 500, height: 900 }));
+    vi.spyOn(heading, "getBoundingClientRect").mockImplementation(() =>
+      DOMRect.fromRect({ y: 2500 - (scroller.scrollTop + 3000), width: 400, height: 40 }));
+
+    for (const [percent, expectedTop] of [[0, 96], [50, 478], [100, 860]]) {
+      scroller.scrollTop = -3000;
+      const landing = scrollHeadingToPercent(heading, percent);
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await landing;
+      expect(result.status).toBe("reached");
+      expect(result.actualTop).toBeCloseTo(expectedTop, 0);
+      expect(scroller.scrollTop).toBeLessThan(0);
+    }
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(scrollBy).toHaveBeenCalledTimes(3);
   });
 
   it("safely ignores a heading removed before the deferred adjustment", () => {

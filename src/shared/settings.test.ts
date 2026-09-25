@@ -56,8 +56,11 @@ describe("interaction settings compatibility", () => {
       hoverExpandEnabled: true,
       targetHighlightEnabled: true,
       targetHighlightDurationMs: 1500,
+      panelSurfaceOpacityPercent: null,
       wrapLongTitles: true,
-      headingScrollPositionPercent: 25
+      headingScrollPositionPercent: 25,
+      visibleAnswersBeforeCurrent: 2,
+      visibleAnswersAfterCurrent: 1
     });
   });
 
@@ -78,7 +81,9 @@ describe("interaction settings compatibility", () => {
       targetHighlightEnabled: true,
       targetHighlightDurationMs: 1500,
       wrapLongTitles: true,
-      headingScrollPositionPercent: 25
+      headingScrollPositionPercent: 25,
+      visibleAnswersBeforeCurrent: 2,
+      visibleAnswersAfterCurrent: 1
     });
   });
 
@@ -88,10 +93,38 @@ describe("interaction settings compatibility", () => {
     ).toMatchObject({ targetHighlightDurationMs: duration });
   });
 
+  it("accepts custom duration and opacity but rejects invalid values", () => {
+    expect(mergeSettings(DEFAULT_SETTINGS, {
+      targetHighlightDurationMs: 2750,
+      panelSurfaceOpacityPercent: 78
+    })).toMatchObject({ targetHighlightDurationMs: 2750, panelSurfaceOpacityPercent: 78 });
+    expect(mergeSettings(DEFAULT_SETTINGS, {
+      targetHighlightDurationMs: 2755,
+      panelSurfaceOpacityPercent: 101
+    })).toMatchObject({ targetHighlightDurationMs: 1500, panelSurfaceOpacityPercent: null });
+    expect(mergeSettings(DEFAULT_SETTINGS, { panelSurfaceOpacityPercent: 0 })
+      .panelSurfaceOpacityPercent).toBe(0);
+    expect(mergeSettings(DEFAULT_SETTINGS, { panelSurfaceOpacityPercent: 100 })
+      .panelSurfaceOpacityPercent).toBe(100);
+    expect(mergeSettings(DEFAULT_SETTINGS, { panelSurfaceOpacityPercent: 70.5 })
+      .panelSurfaceOpacityPercent).toBeNull();
+  });
+
   it("normalizes invalid highlight durations to 1500 ms", () => {
     expect(
       mergeSettings(DEFAULT_SETTINGS, { targetHighlightDurationMs: 999 } as never)
     ).toMatchObject({ targetHighlightDurationMs: 1500 });
+  });
+
+  it("accepts only 0–20 whole-number neighbor counts", () => {
+    expect(mergeSettings(DEFAULT_SETTINGS, {
+      visibleAnswersBeforeCurrent: 0,
+      visibleAnswersAfterCurrent: 20
+    })).toMatchObject({ visibleAnswersBeforeCurrent: 0, visibleAnswersAfterCurrent: 20 });
+    expect(mergeSettings(DEFAULT_SETTINGS, {
+      visibleAnswersBeforeCurrent: -1,
+      visibleAnswersAfterCurrent: 2.5
+    })).toMatchObject({ visibleAnswersBeforeCurrent: 2, visibleAnswersAfterCurrent: 1 });
   });
 
   it.each([

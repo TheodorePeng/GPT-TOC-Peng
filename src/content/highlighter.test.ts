@@ -60,6 +60,21 @@ describe("HeadingHighlighter", () => {
     expect(document.querySelector(".gpt-reader-target-overlay")).toBeNull();
   });
 
+  it("clips a long prompt highlight to the visible viewport", () => {
+    const target = makeTarget("h2");
+    vi.spyOn(target, "getBoundingClientRect").mockReturnValue(
+      DOMRect.fromRect({ x: -20, y: -100, width: 300, height: window.innerHeight + 300 })
+    );
+    const highlighter = new HeadingHighlighter();
+    highlighter.show(target, { enabled: true, durationMs: 1500 });
+    const overlay = document.querySelector<HTMLElement>(".gpt-reader-target-overlay")!;
+    expect(overlay.style.left).toBe("0px");
+    expect(overlay.style.top).toBe("0px");
+    expect(overlay.style.width).toBe("280px");
+    expect(overlay.style.height).toBe(`${window.innerHeight}px`);
+    highlighter.clear();
+  });
+
   it("follows a replaced Writing Block heading without editing its DOM", async () => {
     const shell = document.createElement("div");
     const first = document.createElement("h2");

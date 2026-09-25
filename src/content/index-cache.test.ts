@@ -23,8 +23,8 @@ describe("virtualized answer cache", () => {
     });
     document.body.innerHTML = `
       <main>
-        <div data-testid="conversation-turn-0"><article data-message-author-role="assistant" data-message-id="first"><h2>Stable chapter</h2></article></div>
-        <div data-testid="conversation-turn-1"><article data-message-author-role="assistant" data-message-id="second"><h2>Current chapter</h2></article></div>
+        <div data-testid="conversation-turn-0"><div data-message-author-role="user">First request</div><article data-message-author-role="assistant" data-message-id="first"><h2>Stable chapter</h2></article></div>
+        <div data-testid="conversation-turn-1"><div data-message-author-role="user">Second request</div><article data-message-author-role="assistant" data-message-id="second"><h2>Current chapter</h2></article></div>
       </main>
     `;
     const first = document.querySelector<HTMLElement>("[data-message-id='first']")!;
@@ -45,11 +45,12 @@ describe("virtualized answer cache", () => {
 
     first.remove();
     window.dispatchEvent(new Event("scroll"));
-    await vi.waitFor(() => expect(root.querySelectorAll(".gpt-reader-answer")).toHaveLength(2));
+    await new Promise((resolve) => window.setTimeout(resolve, 180));
+    expect(root.querySelectorAll(".gpt-reader-answer")).toHaveLength(2);
     const cachedGroup = root.querySelector<HTMLElement>(
       '[data-gpt-reader-group-id="gpt-reader-answer-first"]'
     )!;
-    expect(cachedGroup.querySelector(".gpt-reader-answer-title")?.textContent).toContain("Stable chapter");
+    expect(cachedGroup.querySelector(".gpt-reader-answer-title")?.textContent).toContain("First request");
 
     const shell = document.querySelector<HTMLElement>("[data-testid='conversation-turn-0']")!;
     const remounted = document.createElement("article");
@@ -62,6 +63,7 @@ describe("virtualized answer cache", () => {
 
     cachedGroup.querySelector<HTMLButtonElement>("[data-gpt-reader-answer-toggle]")!.click();
     const cachedButton = cachedGroup.querySelector<HTMLButtonElement>("[data-gpt-reader-heading]")!;
+    expect(cachedButton.textContent).toContain("Stable chapter");
     cachedButton.click();
 
     await vi.waitFor(() => {
@@ -73,5 +75,15 @@ describe("virtualized answer cache", () => {
       expect(root.querySelector(".gpt-reader-target-overlay")).not.toBeNull()
     );
     expect(newHeading.hasAttribute("style")).toBe(false);
+
+    shell.remove();
+    await new Promise((resolve) => window.setTimeout(resolve, 180));
+    expect(root.querySelectorAll(".gpt-reader-answer")).toHaveLength(2);
+    expect(root.querySelector(".gpt-reader-answer-title")?.textContent).toContain("First request");
+
+    shell.innerHTML = '<article data-message-author-role="assistant" data-message-id="first"><p>No headings</p></article>';
+    document.querySelector("main")?.prepend(shell);
+    await new Promise((resolve) => window.setTimeout(resolve, 180));
+    expect(root.querySelector('[data-gpt-reader-group-id="gpt-reader-answer-first"]')).toBeNull();
   });
 });

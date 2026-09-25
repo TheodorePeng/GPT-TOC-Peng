@@ -47,15 +47,19 @@ export class HeadingHighlighter {
         return;
       }
       const rect = target.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0 || rect.top >= ownerWindow.innerHeight) {
+      const left = Math.max(0, rect.left);
+      const top = Math.max(0, rect.top);
+      const right = Math.min(ownerWindow.innerWidth, rect.right);
+      const bottom = Math.min(ownerWindow.innerHeight, rect.bottom);
+      if (right <= left || bottom <= top) {
         overlay.hidden = true;
         return;
       }
       overlay.hidden = false;
-      overlay.style.left = `${rect.left}px`;
-      overlay.style.top = `${rect.top}px`;
-      overlay.style.width = `${rect.width}px`;
-      overlay.style.height = `${rect.height}px`;
+      overlay.style.left = `${left}px`;
+      overlay.style.top = `${top}px`;
+      overlay.style.width = `${right - left}px`;
+      overlay.style.height = `${bottom - top}px`;
     };
     this.schedulePosition = () => {
       if (this.frame !== null) {

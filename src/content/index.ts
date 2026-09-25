@@ -19,11 +19,18 @@ import {
   saveSettings,
   subscribeSettings
 } from "../shared/settings";
-import { findNearestVerticalScrollContainer, scrollHeadingToPercent } from "../shared/heading-scroll";
+import {
+  findNearestVerticalScrollContainer,
+  scrollElementNearViewport,
+  scrollHeadingToPercent
+} from "../shared/heading-scroll";
 import { HeadingHighlighter } from "./highlighter";
+import { PromptPreviewController } from "./prompt-preview";
 import {
   DEFAULT_HEIGHT_PERCENT,
+  getSmartPanelHeight,
   getRenderedPanelLayout,
+  getPanelLeft,
   getResizedPanelWidth,
   getViewportPanelLayout,
   normalizeCenterRatio,
@@ -46,6 +53,7 @@ import {
   syncPanelTitleWrapping
 } from "./panel-shell";
 import { getRailMarkers } from "./rail";
+import { selectAnswerWindow } from "./answer-window";
 import {
   answerSnapshotsChanged,
   findAnswerAtAnchor,
@@ -54,12 +62,28 @@ import {
   snapshotAnswers,
   type AnswerSnapshot
 } from "./outline-tracking";
+import {
+  type AnswerMetadata,
+  MESSAGE_TIME_READY_EVENT,
+  MESSAGE_TIME_REQUEST_EVENT,
+  MESSAGE_TIME_RESPONSE_EVENT,
+  formatAnswerTime,
+  getAnswerHeaderText,
+  normalizeMessageTime,
+  normalizePrompt
+} from "../shared/answer-metadata";
+import {
+  ASSISTANT_SELECTOR,
+  MESSAGE_SELECTOR,
+  TURN_SELECTOR,
+  USER_SELECTOR,
+  getMessageId,
+  getMessageRole,
+  getTurnIndex
+} from "../shared/chatgpt-dom";
 
 const ROOT_ID = "gpt-reader-root";
-const ASSISTANT_SELECTOR = "[data-message-author-role='assistant']";
-const MESSAGE_SELECTOR =
-  "[data-message-author-role='user'],[data-message-author-role='assistant']";
-const TURN_SELECTOR = "[data-testid^='conversation-turn-']";
+const READER_OWNER = Symbol.for("gpt-toc-peng:active-reader");
 const HIDDEN_ROUND_ATTR = "data-gpt-reader-hidden-round";
 const ROUND_LIMIT_BANNER_ID = "gpt-reader-round-limit-banner";
 const WIDTH_STORAGE_KEY = "gptReaderPanelWidth";
@@ -67,21 +91,26 @@ const POSITION_STORAGE_KEY = "gptReaderPanelPosition";
 const HEIGHT_STORAGE_KEY = "gptReaderPanelHeight";
 const UI_STORAGE_KEY = "gptReaderUiState";
 const DEFAULT_PANEL_WIDTH = 296;
-const MIN_PANEL_WIDTH = 260;
+const MIN_PANEL_WIDTH = 24;
+const NARROW_PANEL_WIDTH = 128;
 const MAX_PANEL_WIDTH = 440;
 const COLLAPSED_RAIL_WIDTH = 32;
 const PANEL_EDGE_MARGIN = 8;
 const DEFAULT_PANEL_HEIGHT = 680;
 const MIN_PANEL_HEIGHT = 320;
+const MIN_FIXED_PANEL_HEIGHT = 72;
 const SCAN_DEBOUNCE_MS = 120;
 const SCAN_MAX_WAIT_MS = 1000;
 const ACTIVE_ANCHOR_RATIO = 0.48;
-const SCROLL_INTEGRITY_CHECK_MS = 180;
+const SCROLL_INTEGRITY_CHECK_MS = 350;
 const SCROLL_VISIBILITY_CHECK_MS = 1500;
 const POST_SCROLL_CHECK_MS = 450;
+const MIN_MEANINGFUL_LIST_OVERFLOW = 16;
+const MESSAGE_TIME_REQUEST_INTERVAL_MS = 2000;
 
 type PanelUiState = {
   width?: number;
+  lastReadableWidth?: number;
   height?: number;
   heightMode?: PanelHeightMode;
   heightPercent?: number;
@@ -97,8 +126,19 @@ type ConversationRound = {
 
 type CachedAnswer = {
   outline: AnswerOutline;
-  container: HTMLElement;
+  container: HTMLElement | null;
+  turnIndex: number | null;
   sequence: number;
+};
+
+type JumpOrigin = {
+  answerId: string | null;
+  headingId: string | null;
+  clickedHeading: { id: string; answerId: string; text: string } | null;
+  scrollContainer: HTMLElement | null;
+  scrollTop: number;
+  forcedVisibleAnswerId: string | null;
+  promptJumpAnswerId: string | null;
 };
 
 const escapeText = (value: string): string =>
@@ -116,24 +156,35 @@ const escapeText = (value: string): string =>
 class ChatGptReader {
   private root: HTMLElement | null = null;
   private list: HTMLElement | null = null;
-  private activeDot: HTMLElement | null = null;
+  private listContent: HTMLElement | null = null;
+  private listResizeObserver: ResizeObserver | null = null;
+  private smartHeightFrame: number | null = null;
   private collapsedRailMarkers: HTMLElement | null = null;
   private settings: TocSettings = DEFAULT_SETTINGS;
   private savedSettings: TocSettings = DEFAULT_SETTINGS;
   private outlines: AnswerOutline[] = [];
   private displayOutlines: AnswerOutline[] = [];
   private cachedAnswers = new Map<string, CachedAnswer>();
+  private answerMetadata = new Map<string, AnswerMetadata>();
+  private promptTextCache = new WeakMap<HTMLElement, string>();
+  private dirtyPrompts = new Set<HTMLElement>();
+  private timeRequestAttempts = new Map<string, { count: number; lastAt: number; element: Element }>();
+  private pendingTimeRequests = new Map<string, string>();
+  private nextTimeRequestId = 0;
   private nextCachedAnswerSequence = 0;
   private cachedConversationPath = location.pathname;
   private answerSnapshots: AnswerSnapshot[] = [];
   private allHeadings: HeadingInfo[] = [];
   private hiddenRoundContainers = new Set<HTMLElement>();
   private pageScrollContainers = new Set<HTMLElement>();
+  private activeScrollContainer: HTMLElement | null = null;
   private expandedAnswerIds = new Set<string>();
   private collapsedAnswerIds = new Set<string>();
   private currentHeadingId: string | null = null;
   private currentAnswerId: string | null = null;
   private mutationObserver: MutationObserver | null = null;
+  private dirtyAnswerElements = new Set<HTMLElement>();
+  private structuralScanPending = false;
   private scanTimer: number | null = null;
   private scanMaxTimer: number | null = null;
   private activeFrame: number | null = null;
@@ -141,11 +192,20 @@ class ChatGptReader {
   private lastIntegrityCheck = -Infinity;
   private lastVisibilityCheck = -Infinity;
   private clickedHeading: { id: string; answerId: string; text: string } | null = null;
+  private promptJumpAnswerId: string | null = null;
   private jumpGeneration = 0;
+  private jumpInProgress = false;
+  private forcedVisibleAnswerId: string | null = null;
+  private exposeRoundsDuringSeek = false;
   private manualListBrowsing = false;
+  private extraAnswersBefore = 0;
+  private extraAnswersAfter = 0;
+  private answerWindowKey = "";
   private panelWidth = DEFAULT_PANEL_WIDTH;
+  private lastReadableWidth = DEFAULT_PANEL_WIDTH;
+  private lastMeasuredSmartHeight = DEFAULT_PANEL_HEIGHT;
   private panelHeight = DEFAULT_PANEL_HEIGHT;
-  private heightMode: PanelHeightMode = "viewport";
+  private heightMode: PanelHeightMode = "smart";
   private heightPercent = DEFAULT_HEIGHT_PERCENT;
   private centerYRatio = 0.5;
   private panelPosition: PanelPosition | null = null;
@@ -163,6 +223,7 @@ class ChatGptReader {
   private panelMode: PanelMode = "expanded";
   private panelExpandDirection: PanelExpandDirection = "right";
   private panelDisclosure: PanelDisclosureController | null = null;
+  private promptPreview: PromptPreviewController | null = null;
   private readonly headingHighlighter = new HeadingHighlighter();
   private unsubscribeSettings: (() => void) | null = null;
   private settingsRevision = 0;
@@ -177,6 +238,9 @@ class ChatGptReader {
     }
     this.savedSettings = this.settings;
     await this.loadPanelUiState();
+    const ownerDocument = document as Document & { [READER_OWNER]?: ChatGptReader };
+    ownerDocument[READER_OWNER]?.dispose();
+    ownerDocument[READER_OWNER] = this;
     this.panelDisclosure = new PanelDisclosureController({
       mode: this.panelMode,
       hoverEnabled: this.settings.hoverExpandEnabled,
@@ -187,10 +251,24 @@ class ChatGptReader {
       onPresentationChange: () => this.applyPanelPresentation()
     });
     this.ensureShell();
+    if (this.root && this.list) {
+      this.promptPreview = new PromptPreviewController({
+        root: this.root,
+        list: this.list,
+        getPrompt: (answerId) => {
+          const metadata = this.answerMetadata.get(answerId);
+          return metadata?.fullPrompt || metadata?.prompt;
+        },
+        onOpen: () => this.panelDisclosure?.beginInteraction(),
+        onClose: () => this.panelDisclosure?.endInteraction()
+      });
+    }
     this.bindEvents();
+    document.addEventListener(MESSAGE_TIME_RESPONSE_EVENT, this.handleMessageTimeResponse);
+    document.addEventListener(MESSAGE_TIME_READY_EVENT, this.handleMessageTimeReady);
+    this.observePage();
     this.render();
     this.scan();
-    this.observePage();
     this.observeSettings();
     window.addEventListener("scroll", this.handlePageScroll, { passive: true });
     window.addEventListener("resize", this.handleWindowResize, { passive: true });
@@ -204,12 +282,50 @@ class ChatGptReader {
     document.addEventListener("keydown", this.handleUserPageNavigation, { capture: true });
   }
 
+  private dispose(): void {
+    this.jumpGeneration += 1;
+    this.jumpInProgress = false;
+    this.mutationObserver?.disconnect();
+    this.listResizeObserver?.disconnect();
+    this.panelDisclosure?.dispose();
+    this.promptPreview?.dispose();
+    this.unsubscribeSettings?.();
+    for (const container of this.pageScrollContainers) {
+      container.removeEventListener("scroll", this.handlePageScroll);
+    }
+    if (this.scanTimer !== null) window.clearTimeout(this.scanTimer);
+    if (this.scanMaxTimer !== null) window.clearTimeout(this.scanMaxTimer);
+    if (this.postScrollTimer !== null) window.clearTimeout(this.postScrollTimer);
+    if (this.smartHeightFrame !== null) window.cancelAnimationFrame(this.smartHeightFrame);
+    if (this.activeFrame !== null) window.cancelAnimationFrame(this.activeFrame);
+    window.removeEventListener("scroll", this.handlePageScroll);
+    window.removeEventListener("resize", this.handleWindowResize);
+    window.removeEventListener("pointermove", this.dragPanel);
+    window.removeEventListener("pointerup", this.stopDrag);
+    window.removeEventListener("pointercancel", this.stopDrag);
+    window.removeEventListener("pointermove", this.resizePanel);
+    window.removeEventListener("pointerup", this.stopResize);
+    window.removeEventListener("pointercancel", this.stopResize);
+    window.removeEventListener("pointermove", this.resizePanelHeight);
+    window.removeEventListener("pointerup", this.stopHeightResize);
+    window.removeEventListener("pointercancel", this.stopHeightResize);
+    document.removeEventListener("scroll", this.handleDocumentScroll, true);
+    document.removeEventListener("wheel", this.handleUserPageNavigation, true);
+    document.removeEventListener("touchstart", this.handleUserPageNavigation, true);
+    document.removeEventListener("pointerdown", this.handleUserPageNavigation, true);
+    document.removeEventListener("keydown", this.handleUserPageNavigation, true);
+    document.removeEventListener(MESSAGE_TIME_RESPONSE_EVENT, this.handleMessageTimeResponse);
+    document.removeEventListener(MESSAGE_TIME_READY_EVENT, this.handleMessageTimeReady);
+    this.restoreHiddenRounds();
+    this.root?.remove();
+  }
+
   private ensureShell(): void {
     const existing = document.getElementById(ROOT_ID);
     if (existing?.querySelector("[data-gpt-reader-direction]")) {
       this.root = existing;
       this.list = existing.querySelector<HTMLElement>("[data-gpt-reader-list]");
-      this.activeDot = existing.querySelector<HTMLElement>("[data-gpt-reader-active-dot]");
+      this.listContent = existing.querySelector<HTMLElement>("[data-gpt-reader-list-content]");
       this.collapsedRailMarkers = existing.querySelector<HTMLElement>(
         "[data-gpt-reader-collapsed-markers]"
       );
@@ -219,6 +335,7 @@ class ChatGptReader {
       this.applyPanelPosition();
       this.applyPanelPresentation();
       this.syncPanelHeightControls();
+      this.observeListHeight();
       return;
     }
 
@@ -228,7 +345,7 @@ class ChatGptReader {
     document.body.append(root);
     this.root = root;
     this.list = root.querySelector<HTMLElement>("[data-gpt-reader-list]");
-    this.activeDot = root.querySelector<HTMLElement>("[data-gpt-reader-active-dot]");
+    this.listContent = root.querySelector<HTMLElement>("[data-gpt-reader-list-content]");
     this.collapsedRailMarkers = root.querySelector<HTMLElement>(
       "[data-gpt-reader-collapsed-markers]"
     );
@@ -238,6 +355,32 @@ class ChatGptReader {
     this.applyPanelPosition();
     this.applyPanelPresentation();
     this.syncPanelHeightControls();
+    this.observeListHeight();
+  }
+
+  private observeListHeight(): void {
+    if (!this.listContent || typeof ResizeObserver === "undefined") return;
+    this.listResizeObserver?.disconnect();
+    this.listResizeObserver = new ResizeObserver(() => this.scheduleSmartHeight());
+    this.listResizeObserver.observe(this.listContent);
+  }
+
+  private scheduleSmartHeight(): void {
+    if (this.smartHeightFrame !== null) return;
+    this.smartHeightFrame = window.requestAnimationFrame(() => {
+      this.smartHeightFrame = null;
+      if (this.heightMode === "smart") this.applyPanelPosition();
+      if (this.list) {
+        this.list.classList.toggle(
+          "gpt-reader-list-scrollable",
+          this.list.scrollHeight > this.list.clientHeight + MIN_MEANINGFUL_LIST_OVERFLOW
+        );
+        this.root?.style.setProperty("--gpt-reader-list-height",
+          `${Math.max(28, this.list.getBoundingClientRect().height)}px`);
+        this.root?.style.setProperty("--gpt-reader-scrollbar-gutter",
+          `${Math.max(0, this.list.offsetWidth - this.list.clientWidth)}px`);
+      }
+    });
   }
 
   private bindEvents(): void {
@@ -246,8 +389,7 @@ class ChatGptReader {
         event.preventDefault();
       }
     });
-    this.list?.addEventListener("scroll", () => this.positionActiveDot(), { passive: true });
-    this.list?.addEventListener("wheel", () => { this.manualListBrowsing = true; }, { passive: true });
+    this.list?.addEventListener("wheel", this.handleListWheel, { passive: false });
     this.list?.addEventListener("touchstart", () => { this.manualListBrowsing = true; }, { passive: true });
     this.list?.addEventListener("pointerdown", (event) => {
       if (event.target === this.list) {
@@ -264,6 +406,28 @@ class ChatGptReader {
       }
     });
     this.root?.addEventListener("keydown", (event) => {
+      if (event.target instanceof HTMLElement && event.target.matches("[data-gpt-reader-drag]")) {
+        const movement: Record<string, [number, number]> = {
+          ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1]
+        };
+        const direction = movement[event.key];
+        if (direction && this.root) {
+          event.preventDefault();
+          const step = event.shiftKey ? 20 : 5;
+          const rect = this.root.getBoundingClientRect();
+          this.panelPosition = this.constrainPanelPosition(
+            rect.left + direction[0] * step, rect.top + direction[1] * step
+          );
+          if (this.heightMode === "viewport") {
+            this.centerYRatio = normalizeCenterRatio(
+              (this.panelPosition.top + rect.height / 2) / window.innerHeight
+            );
+          }
+          this.applyPanelPosition();
+          void this.savePanelUiState();
+          return;
+        }
+      }
       if (event.key !== "Escape" || this.panelDisclosure?.presentation !== "peek") {
         return;
       }
@@ -277,7 +441,7 @@ class ChatGptReader {
     this.root?.addEventListener("pointerdown", (event) => {
       const target = event.target as HTMLElement;
       if (target.closest("[data-gpt-reader-collapsed-rail]")) {
-        this.panelDisclosure?.setMode("expanded");
+        if (this.panelWidth >= NARROW_PANEL_WIDTH) this.panelDisclosure?.setMode("expanded");
         return;
       }
 
@@ -304,6 +468,7 @@ class ChatGptReader {
       const headingButton = target.closest<HTMLButtonElement>("[data-gpt-reader-heading]");
       const depthButton = target.closest<HTMLButtonElement>("[data-gpt-reader-depth]");
       const answerToggle = target.closest<HTMLButtonElement>("[data-gpt-reader-answer-toggle]");
+      const promptJump = target.closest<HTMLButtonElement>("[data-gpt-reader-prompt-jump]");
 
       if (headingButton) {
         this.scrollToHeading(
@@ -314,7 +479,39 @@ class ChatGptReader {
       }
 
       if (answerToggle) {
+        this.promptPreview?.close();
         this.toggleAnswer(answerToggle.dataset.gptReaderAnswerId);
+        return;
+      }
+
+      if (promptJump) {
+        this.promptPreview?.close();
+        this.scrollToPrompt(promptJump.dataset.gptReaderPromptJump);
+        return;
+      }
+
+      const reveal = target.closest<HTMLButtonElement>("[data-gpt-reader-reveal]");
+      if (reveal) {
+        const side = reveal.dataset.gptReaderReveal;
+        const count = side === "before"
+          ? this.settings.visibleAnswersBeforeCurrent : this.settings.visibleAnswersAfterCurrent;
+        if (side === "before") this.extraAnswersBefore += Math.max(1, count);
+        if (side === "after") this.extraAnswersAfter += Math.max(1, count);
+        this.manualListBrowsing = true;
+        this.renderList();
+        (this.listContent?.querySelector<HTMLButtonElement>(`[data-gpt-reader-reveal="${side}"]`) ??
+          this.listContent?.querySelector<HTMLButtonElement>("[data-gpt-reader-reveal-collapse]"))
+          ?.focus({ preventScroll: true });
+        return;
+      }
+
+      if (target.closest("[data-gpt-reader-reveal-collapse]")) {
+        this.extraAnswersBefore = 0;
+        this.extraAnswersAfter = 0;
+        this.manualListBrowsing = true;
+        this.renderList();
+        this.listContent?.querySelector<HTMLButtonElement>(".gpt-reader-answer.is-current [data-gpt-reader-answer-toggle]")
+          ?.focus({ preventScroll: true });
         return;
       }
 
@@ -346,7 +543,8 @@ class ChatGptReader {
       }
 
       if (target.closest("[data-gpt-reader-collapsed-rail]")) {
-        this.panelDisclosure?.setMode("expanded");
+        if (this.panelWidth < NARROW_PANEL_WIDTH) this.restoreReadableWidth();
+        else this.panelDisclosure?.setMode("expanded");
       }
     });
 
@@ -360,8 +558,16 @@ class ChatGptReader {
         void this.updateSettings({ expandCurrentOnly: target.checked });
       }
 
-      if (target.matches("[data-gpt-reader-max-rounds]")) {
-        void this.updateSettings({ maxVisibleRounds: this.parseRoundLimit(target.value) });
+      if (target.matches("[data-gpt-reader-before-count], [data-gpt-reader-after-count]")) {
+        const value = Number(target.value);
+        const before = target.matches("[data-gpt-reader-before-count]");
+        if (target.value.trim() === "" || !Number.isInteger(value) || value < 0 || value > 20) {
+          target.value = String(before ? this.settings.visibleAnswersBeforeCurrent : this.settings.visibleAnswersAfterCurrent);
+          this.showPanelSaveStatus("显示数量无效：请输入 0–20 的整数", true);
+        } else {
+          void this.updateSettings(before
+            ? { visibleAnswersBeforeCurrent: value } : { visibleAnswersAfterCurrent: value });
+        }
       }
 
       if (target.matches("[data-gpt-reader-wrap-titles]")) {
@@ -369,7 +575,7 @@ class ChatGptReader {
       }
 
       if (target.matches("[data-gpt-reader-height-mode]")) {
-        this.setHeightMode(target.value === "viewport" ? "viewport" : "fixed");
+        this.setHeightMode(target.value === "smart" ? "smart" : target.value === "viewport" ? "viewport" : "fixed");
       }
 
       if (target.matches("[data-gpt-reader-height-percent]")) {
@@ -382,13 +588,45 @@ class ChatGptReader {
   private observePage(): void {
     this.mutationObserver?.disconnect();
     this.mutationObserver = new MutationObserver((mutations) => {
-      if (this.root && mutations.every((mutation) => this.root?.contains(mutation.target))) {
-        return;
+      const observedDocument = this.root?.ownerDocument;
+      if (!observedDocument?.defaultView || typeof window === "undefined") return;
+      const PageElement = observedDocument.defaultView.Element;
+      let relevant = observedDocument.location.pathname !== this.cachedConversationPath;
+      if (relevant) this.structuralScanPending = true;
+      // ChatGPT may replace body children after the content script runs.
+      // Reattach the existing shell so its event listeners and local UI state survive.
+      if (this.root && !this.root.isConnected && observedDocument.body) {
+        observedDocument.body.append(this.root);
+        this.structuralScanPending = true;
+        relevant = true;
       }
-
-      this.queueScan();
+      for (const mutation of mutations) {
+        if (this.root?.contains(mutation.target)) continue;
+        const target = mutation.target instanceof PageElement
+          ? mutation.target : mutation.target.parentElement;
+        if (!target) continue;
+        if (mutation.type === "childList" && [...mutation.addedNodes, ...mutation.removedNodes]
+          .some((node) => node instanceof PageElement &&
+            (node.matches(MESSAGE_SELECTOR) || node.querySelector(MESSAGE_SELECTOR)))) {
+          this.structuralScanPending = true;
+          relevant = true;
+          continue;
+        }
+        const answer = target.closest<HTMLElement>(ASSISTANT_SELECTOR);
+        if (answer) {
+          this.dirtyAnswerElements.add(answer);
+          relevant = true;
+          continue;
+        }
+        const user = target.closest<HTMLElement>(USER_SELECTOR);
+        if (user) {
+          this.dirtyPrompts.add(user);
+          relevant = true;
+        }
+      }
+      if (relevant) this.queueScan();
     });
-    this.mutationObserver.observe(document.body, {
+    this.mutationObserver.observe(document.documentElement, {
       childList: true,
       subtree: true,
       characterData: true
@@ -400,6 +638,13 @@ class ChatGptReader {
     this.unsubscribeSettings = subscribeSettings((settings) => {
       if (this.pendingSettingsSaves > 0) {
         return;
+      }
+      if (settings.maxVisibleRounds !== this.settings.maxVisibleRounds) {
+        this.forcedVisibleAnswerId = null;
+        this.exposeRoundsDuringSeek = false;
+        this.jumpGeneration += 1;
+        this.jumpInProgress = false;
+        this.showJumpStatus(null);
       }
       this.settings = settings;
       this.savedSettings = settings;
@@ -428,20 +673,66 @@ class ChatGptReader {
       window.clearTimeout(this.scanMaxTimer);
       this.scanMaxTimer = null;
     }
-    this.scan();
+    if (!this.structuralScanPending && this.dirtyAnswerElements.size === 0 &&
+      this.dirtyPrompts.size === 0) return;
+    const dirtyAnswers = this.structuralScanPending ? undefined : new Set(this.dirtyAnswerElements);
+    this.structuralScanPending = false;
+    this.dirtyAnswerElements.clear();
+    this.scan(false, dirtyAnswers);
   };
 
-  private scan(forceRender = false): void {
+  private scan(forceRender = false, dirtyAnswers?: Set<HTMLElement>): void {
+    this.structuralScanPending = false;
+    this.dirtyAnswerElements.clear();
+    if (location.pathname !== this.cachedConversationPath) {
+      dirtyAnswers = undefined;
+      this.cachedConversationPath = location.pathname;
+      this.cachedAnswers.clear();
+      this.answerMetadata.clear();
+      this.promptTextCache = new WeakMap();
+      this.dirtyPrompts.clear();
+      this.timeRequestAttempts.clear();
+      this.pendingTimeRequests.clear();
+      this.nextCachedAnswerSequence = 0;
+      this.forcedVisibleAnswerId = null;
+      this.exposeRoundsDuringSeek = false;
+      this.clickedHeading = null;
+      this.promptJumpAnswerId = null;
+      this.jumpGeneration += 1;
+      this.jumpInProgress = false;
+      this.showJumpStatus(null);
+    }
     const previousOutlines = this.outlines;
     const previousDisplayOutlines = this.displayOutlines;
     const previousAnswerId = this.currentAnswerId;
     const previousHeadingId = this.currentHeadingId;
     this.applyRoundLimit();
-    const answerElements = this.collectAnswerElements();
-    this.refreshPageScrollListeners(answerElements);
-    this.outlines = extractAnswerOutlines(answerElements);
-    this.refreshAnswerCache();
-    this.answerSnapshots = snapshotAnswers(answerElements);
+    const canUpdateIncrementally = dirtyAnswers !== undefined &&
+      [...dirtyAnswers].every((answer) => answer.isConnected &&
+        this.answerSnapshots.some((snapshot) => snapshot.element === answer));
+    const answerElements = canUpdateIncrementally
+      ? this.answerSnapshots.map((snapshot) => snapshot.element) : this.collectAnswerElements();
+    if (canUpdateIncrementally) {
+      const changed = new Map([...dirtyAnswers!].map((answer) => [ensureAnswerId(answer), answer]));
+      const existing = new Map(this.outlines.map((outline) => [outline.id, outline]));
+      for (const [id, answer] of changed) {
+        const outline = extractAnswerOutlines([answer])[0];
+        if (outline) existing.set(id, outline);
+        else existing.delete(id);
+      }
+      this.outlines = answerElements.map((element) => existing.get(ensureAnswerId(element)))
+        .filter((outline): outline is AnswerOutline => Boolean(outline));
+      const changedSnapshots = new Map(snapshotAnswers([...changed.values()])
+        .map((snapshot) => [snapshot.element, snapshot]));
+      this.answerSnapshots = this.answerSnapshots.map((snapshot) =>
+        changedSnapshots.get(snapshot.element) ?? snapshot);
+    } else {
+      this.refreshPageScrollListeners(answerElements);
+      this.outlines = extractAnswerOutlines(answerElements);
+      this.answerSnapshots = snapshotAnswers(answerElements);
+    }
+    const metadataChanged = this.refreshAnswerCache(answerElements);
+    if (!canUpdateIncrementally) this.requestMessageTimes();
     this.lastIntegrityCheck = performance.now();
     this.lastVisibilityCheck = this.lastIntegrityCheck;
     this.expandedAnswerIds = new Set(
@@ -462,6 +753,7 @@ class ChatGptReader {
 
     if (
       forceRender ||
+      metadataChanged ||
       !this.sameOutlineStructure(previousOutlines, this.outlines) ||
       !this.sameOutlineStructure(previousDisplayOutlines, this.displayOutlines) ||
       previousAnswerId !== this.currentAnswerId
@@ -479,32 +771,50 @@ class ChatGptReader {
     );
   }
 
-  private refreshAnswerCache(): void {
-    if (location.pathname !== this.cachedConversationPath) {
-      this.cachedConversationPath = location.pathname;
-      this.cachedAnswers.clear();
-      this.nextCachedAnswerSequence = 0;
-    }
+  private refreshAnswerCache(answerElements: HTMLElement[]): boolean {
+    const metadataChanged = this.refreshPromptMetadata();
 
     for (const outline of this.outlines) {
       const container = this.getMessageContainer(outline.element as HTMLElement);
       const previous = this.cachedAnswers.get(outline.id);
       this.cachedAnswers.set(outline.id, {
-        outline: { ...outline, label: `回答 · ${outline.headings[0]?.text ?? "标题待载入"}` },
+        outline: { ...outline, label: getAnswerHeaderText(this.answerMetadata.get(outline.id)) },
         container,
+        turnIndex: getTurnIndex(container) ?? previous?.turnIndex ?? null,
         sequence: previous?.sequence ?? this.nextCachedAnswerSequence++
       });
     }
 
+    const liveIds = new Set(this.outlines.map((outline) => outline.id));
+    const mountedIds = new Set(answerElements.map(ensureAnswerId));
     for (const [id, answer] of this.cachedAnswers) {
-      if (!answer.container.isConnected) {
+      if ((mountedIds.has(id) && !liveIds.has(id)) ||
+        (!answer.container?.isConnected && answer.turnIndex === null && id.startsWith("gpt-reader-answer-local-"))) {
         this.cachedAnswers.delete(id);
+        continue;
       }
+      if (!liveIds.has(id) && !answer.outline.element.isConnected &&
+        !answer.outline.element.hasAttribute("data-gpt-reader-cache-placeholder")) {
+        const placeholder = document.createElement("div");
+        placeholder.setAttribute("data-gpt-reader-cache-placeholder", "");
+        answer.outline = {
+          ...answer.outline,
+          element: placeholder,
+          headings: answer.outline.headings.map((heading) => ({
+            ...heading,
+            element: placeholder
+          }))
+        };
+      }
+      if (!answer.container?.isConnected) answer.container = null;
     }
 
     this.displayOutlines = [...this.cachedAnswers.values()]
       .sort((left, right) => {
-        if (left.container === right.container) {
+        if (left.turnIndex !== null && right.turnIndex !== null && left.turnIndex !== right.turnIndex) {
+          return left.turnIndex - right.turnIndex;
+        }
+        if (!left.container?.isConnected || !right.container?.isConnected || left.container === right.container) {
           return left.sequence - right.sequence;
         }
         const position = left.container.compareDocumentPosition(right.container);
@@ -513,12 +823,108 @@ class ChatGptReader {
         return left.sequence - right.sequence;
       })
       .map((answer) => answer.outline);
+    return metadataChanged;
   }
+
+  private refreshPromptMetadata(): boolean {
+    let latestUser: HTMLElement | null = null;
+    let changed = false;
+    for (const message of document.querySelectorAll<HTMLElement>(MESSAGE_SELECTOR)) {
+      if (this.root?.contains(message)) continue;
+      if (getMessageRole(message) === "user") {
+        latestUser = message;
+        continue;
+      }
+      const turn = this.getMessageContainer(message);
+      const sameTurnUser = turn === message ? null :
+        turn.querySelector<HTMLElement>(USER_SELECTOR);
+      const user = sameTurnUser ?? latestUser;
+      const answerId = ensureAnswerId(message);
+      const previous = this.answerMetadata.get(answerId);
+      if (!user) continue;
+      const promptMessageId = getMessageId(user);
+      const promptTurnIndex = getTurnIndex(this.getMessageContainer(user));
+      let fullPrompt = this.promptTextCache.get(user);
+      if (fullPrompt === undefined || this.dirtyPrompts.has(user)) {
+        fullPrompt = (user.textContent ?? "").replace(/\s+/g, " ").trim();
+        this.promptTextCache.set(user, fullPrompt);
+      }
+      if (previous?.fullPrompt === fullPrompt && previous.promptMessageId === promptMessageId &&
+        previous.promptTurnIndex === promptTurnIndex) continue;
+      this.answerMetadata.set(answerId, {
+        createdAtMs: previous?.createdAtMs ?? null,
+        prompt: normalizePrompt(fullPrompt),
+        fullPrompt,
+        promptMessageId,
+        promptTurnIndex
+      });
+      changed = true;
+    }
+    this.dirtyPrompts.clear();
+    return changed;
+  }
+
+  private handleMessageTimeReady = (): void => this.requestMessageTimes(true);
+
+  private requestMessageTimes = (force = false): void => {
+    if (location.pathname !== this.cachedConversationPath) return;
+    const now = performance.now();
+    const ids: string[] = [];
+    for (const message of document.querySelectorAll<HTMLElement>(ASSISTANT_SELECTOR)) {
+      const messageId = getMessageId(message);
+      const createdAtMs = this.answerMetadata.get(ensureAnswerId(message))?.createdAtMs;
+      if (!messageId || createdAtMs !== null && createdAtMs !== undefined) continue;
+      const previous = this.timeRequestAttempts.get(messageId);
+      const count = previous?.element === message ? previous.count : 0;
+      if (count >= 3 || !force && previous?.element === message &&
+        now - previous.lastAt < MESSAGE_TIME_REQUEST_INTERVAL_MS) continue;
+      ids.push(messageId);
+      this.timeRequestAttempts.set(messageId, { count: count + 1, lastAt: now, element: message });
+      if (ids.length === 100) break;
+    }
+    if (ids.length === 0) return;
+    const requestId = `toc-${++this.nextTimeRequestId}`;
+    this.pendingTimeRequests.set(requestId, location.pathname);
+    document.dispatchEvent(new CustomEvent(MESSAGE_TIME_REQUEST_EVENT, {
+      detail: JSON.stringify({ requestId, ids })
+    }));
+  };
+
+  private handleMessageTimeResponse = (event: Event): void => {
+    let response: { requestId: string; entries: { id: string; createdAtMs: number }[] };
+    try {
+      response = JSON.parse((event as CustomEvent<string>).detail);
+    } catch {
+      return;
+    }
+    if (!response || typeof response.requestId !== "string" || !Array.isArray(response.entries)) return;
+    const requestPath = this.pendingTimeRequests.get(response.requestId);
+    this.pendingTimeRequests.delete(response.requestId);
+    if (!requestPath || requestPath !== location.pathname) return;
+    let changed = false;
+    for (const entry of response.entries.slice(0, 100)) {
+      if (typeof entry?.id !== "string" || typeof entry.createdAtMs !== "number") continue;
+      const attempted = this.timeRequestAttempts.get(entry.id);
+      if (!attempted || !attempted.element.isConnected ||
+        getMessageId(attempted.element) !== entry.id) continue;
+      const createdAtMs = normalizeMessageTime(entry.createdAtMs / 1000);
+      if (createdAtMs === null) continue;
+      const answerId = ensureAnswerId(attempted.element);
+      const previous = this.answerMetadata.get(answerId);
+      if (previous?.createdAtMs === createdAtMs) continue;
+      this.answerMetadata.set(answerId, { ...previous, createdAtMs, prompt: previous?.prompt ?? "" });
+      const cached = this.cachedAnswers.get(answerId);
+      if (cached) cached.outline = { ...cached.outline, label: getAnswerHeaderText(this.answerMetadata.get(answerId)) };
+      changed = true;
+    }
+    if (changed) this.renderList();
+  };
 
   private sameOutlineStructure(previous: AnswerOutline[], next: AnswerOutline[]): boolean {
     return previous.length === next.length && previous.every((outline, index) => {
       const current = next[index];
       return outline.id === current.id &&
+        outline.label === current.label &&
         outline.headings.length === current.headings.length &&
         outline.headings.every((heading, headingIndex) => {
           const nextHeading = current.headings[headingIndex];
@@ -541,11 +947,13 @@ class ChatGptReader {
   };
 
   private handleWindowResize = (): void => {
+    this.activeScrollContainer = null;
     if (this.panelPosition) {
       this.applyPanelPosition();
     } else {
       this.applyPanelHeight();
     }
+    this.scheduleSmartHeight();
     this.queueActiveUpdate();
   };
 
@@ -557,8 +965,28 @@ class ChatGptReader {
     this.handlePageScroll();
   };
 
+  private handleListWheel = (event: WheelEvent): void => {
+    this.manualListBrowsing = true;
+    if (!this.list || this.list.scrollHeight > this.list.clientHeight + MIN_MEANINGFUL_LIST_OVERFLOW ||
+      event.ctrlKey || Math.abs(event.deltaY) < 0.5 || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+      return;
+    }
+
+    const container = this.getPageScrollContainer();
+    if (!container) return;
+
+    const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 :
+      event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? container.clientHeight : 1;
+    event.preventDefault();
+    container.scrollBy({ top: event.deltaY * unit, behavior: "instant" });
+  };
+
   private handlePageScroll = (): void => {
-    this.manualListBrowsing = false;
+    if (location.pathname !== this.cachedConversationPath) {
+      this.scan(true);
+      return;
+    }
+    if (!this.jumpInProgress) this.manualListBrowsing = false;
     this.queueActiveUpdate();
     if (this.postScrollTimer !== null) {
       window.clearTimeout(this.postScrollTimer);
@@ -572,8 +1000,14 @@ class ChatGptReader {
 
   private handleUserPageNavigation = (event: Event): void => {
     if (this.root && event.target instanceof Node && this.root.contains(event.target)) {
-      if (event instanceof KeyboardEvent && this.list?.contains(event.target)) {
-        this.manualListBrowsing = this.isScrollKey(event);
+      if (event.type === "wheel" || event.type === "touchstart" ||
+        (event instanceof KeyboardEvent && this.isScrollKey(event))) {
+        if (this.jumpInProgress) this.showJumpStatus(null);
+        this.clickedHeading = null;
+        this.promptJumpAnswerId = null;
+        this.jumpGeneration += 1;
+        this.jumpInProgress = false;
+        this.manualListBrowsing = true;
       }
       return;
     }
@@ -581,8 +1015,11 @@ class ChatGptReader {
       return;
     }
 
+    if (this.jumpInProgress) this.showJumpStatus(null);
     this.clickedHeading = null;
+    this.promptJumpAnswerId = null;
     this.jumpGeneration += 1;
+    this.jumpInProgress = false;
     this.manualListBrowsing = false;
     this.queueActiveUpdate();
   };
@@ -618,6 +1055,8 @@ class ChatGptReader {
     }
 
     this.pageScrollContainers = nextContainers;
+    this.activeScrollContainer = answerElements[0]
+      ? findNearestVerticalScrollContainer(answerElements[0]) : null;
   }
 
   private isPageScrollContainer(element: HTMLElement): boolean {
@@ -682,7 +1121,6 @@ class ChatGptReader {
     }
 
     this.keepActiveHeadingInView();
-    this.positionActiveDot();
   }
 
   private render(): void {
@@ -692,6 +1130,12 @@ class ChatGptReader {
 
     this.root.classList.toggle("is-disabled", !this.settings.enabled);
     syncPanelTitleWrapping(this.root, this.settings.wrapLongTitles);
+    const opacity = this.settings.panelSurfaceOpacityPercent;
+    if (opacity === null) {
+      this.root.style.removeProperty("--gpt-reader-surface-alpha");
+    } else {
+      this.root.style.setProperty("--gpt-reader-surface-alpha", String(opacity / 100));
+    }
     this.applyPanelDirection();
     this.applyPanelPresentation();
     this.root
@@ -711,12 +1155,10 @@ class ChatGptReader {
       expandInput.checked = this.settings.expandCurrentOnly;
     }
 
-    const maxRoundsInput = this.root.querySelector<HTMLInputElement>(
-      "[data-gpt-reader-max-rounds]"
-    );
-    if (maxRoundsInput) {
-      maxRoundsInput.value = String(this.settings.maxVisibleRounds);
-    }
+    const beforeInput = this.root.querySelector<HTMLInputElement>("[data-gpt-reader-before-count]");
+    if (beforeInput) beforeInput.value = String(this.settings.visibleAnswersBeforeCurrent);
+    const afterInput = this.root.querySelector<HTMLInputElement>("[data-gpt-reader-after-count]");
+    if (afterInput) afterInput.value = String(this.settings.visibleAnswersAfterCurrent);
 
     this.renderDepthButtons();
     this.renderList();
@@ -746,8 +1188,12 @@ class ChatGptReader {
       "[data-gpt-reader-collapsed-rail]"
     );
     if (railButton) {
-      railButton.setAttribute("aria-expanded", String(!isRail));
-      railButton.title = isRail ? "点击固定展开目录" : "ChatGPT 回答目录已展开";
+      const isNarrow = this.panelWidth < NARROW_PANEL_WIDTH;
+      railButton.setAttribute("aria-expanded", String(!isRail && !isNarrow));
+      railButton.setAttribute("aria-label", isNarrow
+        ? "恢复目录宽度" : "展开 ChatGPT 回答目录");
+      railButton.title = isNarrow
+        ? "恢复上次可读宽度" : isRail ? "点击固定展开目录" : "ChatGPT 回答目录已展开";
     }
   }
 
@@ -826,75 +1272,75 @@ class ChatGptReader {
   }
 
   private renderList(): void {
-    if (!this.list) {
+    if (!this.list || !this.listContent) {
       return;
     }
 
     if (!this.settings.enabled) {
-      this.list.replaceChildren();
+      this.promptPreview?.close();
+      this.listContent.replaceChildren();
+      this.scheduleSmartHeight();
       return;
     }
 
-    if (
-      this.displayOutlines.length === 0 ||
-      (this.currentAnswerId !== null && !this.displayOutlines.some((outline) => outline.id === this.currentAnswerId))
-    ) {
+    if (this.displayOutlines.length === 0 && this.currentAnswerId === null) {
+      this.promptPreview?.close();
       const empty = document.createElement("p");
       empty.className = "gpt-reader-empty";
       empty.textContent = "当前回答还没有 Markdown 标题";
-      this.list.replaceChildren(empty);
-      this.positionActiveDot();
+      this.listContent.replaceChildren(empty);
+      this.scheduleSmartHeight();
       this.renderCollapsedRail();
       return;
     }
 
+    const windowKey = `${location.pathname}:${this.currentAnswerId ?? ""}:${this.settings.visibleAnswersBeforeCurrent}:${this.settings.visibleAnswersAfterCurrent}`;
+    if (windowKey !== this.answerWindowKey) {
+      this.answerWindowKey = windowKey;
+      this.extraAnswersBefore = 0;
+      this.extraAnswersAfter = 0;
+    }
+    const orderedIds = this.displayOutlines.map((outline) => outline.id);
+    const emptyCurrentId = this.currentAnswerId && !orderedIds.includes(this.currentAnswerId)
+      ? this.currentAnswerId : null;
+    if (emptyCurrentId) {
+      orderedIds.splice(this.getEmptyCurrentInsertionIndex(), 0, emptyCurrentId);
+    }
+    const visibleWindow = selectAnswerWindow(
+      orderedIds, this.currentAnswerId,
+      this.settings.visibleAnswersBeforeCurrent,
+      this.settings.visibleAnswersAfterCurrent,
+      this.extraAnswersBefore,
+      this.extraAnswersAfter
+    );
+    const outlineById = new Map(this.displayOutlines.map((outline) => [outline.id, outline]));
     const groups: HTMLElement[] = [];
     const existingGroups = new Map(
-      Array.from(this.list.querySelectorAll<HTMLElement>(":scope > .gpt-reader-answer"))
+      Array.from(this.listContent.querySelectorAll<HTMLElement>(":scope > .gpt-reader-answer"))
         .map((group) => [group.dataset.gptReaderGroupId, group] as const)
     );
-    this.displayOutlines.forEach((outline) => {
-      const isCurrentAnswer = outline.id === this.currentAnswerId;
-      const group = existingGroups.get(outline.id) ?? document.createElement("section");
+    visibleWindow.visibleIds.forEach((answerId) => {
+      const outline = outlineById.get(answerId);
+      const isCurrentAnswer = answerId === this.currentAnswerId;
+      const group = existingGroups.get(answerId) ?? document.createElement("section");
       group.classList.add("gpt-reader-answer");
-      group.dataset.gptReaderGroupId = outline.id;
+      group.dataset.gptReaderGroupId = answerId;
       group.classList.toggle("is-current", isCurrentAnswer);
+      if (!outline) {
+        const header = this.updateAnswerHeader(group, answerId, false, isCurrentAnswer, false);
+        const empty = group.querySelector<HTMLElement>(".gpt-reader-answer-empty") ?? document.createElement("p");
+        empty.className = "gpt-reader-answer-empty";
+        empty.textContent = "当前回答暂无 Markdown 标题";
+        this.reconcileChildren(group, [header, empty]);
+        groups.push(group);
+        return;
+      }
       const isManuallyCollapsed = this.collapsedAnswerIds.has(outline.id);
       const isPinnedOpen = !this.settings.expandCurrentOnly || isCurrentAnswer;
       const isExpanded =
         !isManuallyCollapsed && (isPinnedOpen || this.expandedAnswerIds.has(outline.id));
 
-      const header = group.querySelector<HTMLElement>(":scope > .gpt-reader-answer-title") ??
-        document.createElement("div");
-      header.classList.add("gpt-reader-answer-title");
-      header.classList.toggle("is-collapsed", !isExpanded);
-      let toggle = header.querySelector<HTMLButtonElement>("[data-gpt-reader-answer-toggle]");
-      if (!toggle) {
-        toggle = document.createElement("button");
-        toggle.type = "button";
-        toggle.dataset.gptReaderAnswerToggle = "";
-        toggle.innerHTML = `<span class="gpt-reader-answer-caret" aria-hidden="true"></span><span></span>`;
-        header.append(toggle);
-      }
-      toggle.dataset.gptReaderAnswerId = outline.id;
-      toggle.setAttribute("aria-expanded", String(isExpanded));
-      const caret = toggle.querySelector<HTMLElement>(".gpt-reader-answer-caret");
-      if (caret && caret.dataset.expanded !== String(isExpanded)) {
-        caret.innerHTML = getAnswerChevronIcon(isExpanded);
-        caret.dataset.expanded = String(isExpanded);
-      }
-      const label = toggle.querySelector<HTMLElement>("span:last-child");
-      if (label) {
-        label.textContent = outline.label;
-      }
-      const currentBadge = header.querySelector("em");
-      if (isCurrentAnswer && !currentBadge) {
-        const badge = document.createElement("em");
-        badge.textContent = "当前";
-        header.append(badge);
-      } else if (!isCurrentAnswer) {
-        currentBadge?.remove();
-      }
+      const header = this.updateAnswerHeader(group, outline.id, isExpanded, isCurrentAnswer);
 
       const headings = isExpanded
         ? getVisibleHeadingsForAnswer(
@@ -914,11 +1360,8 @@ class ChatGptReader {
         button.classList.add("gpt-reader-heading");
         button.dataset.gptReaderHeading = heading.id;
         button.dataset.gptReaderAnswerId = heading.answerId;
-        const available = Boolean(
-          heading.element.isConnected || this.cachedAnswers.get(heading.answerId)?.container.isConnected
-        );
-        button.disabled = !available;
-        button.title = available ? heading.text : "目标暂不可跳转，请滚动到该回答后重试";
+        button.disabled = false;
+        button.title = heading.text;
         button.classList.toggle("is-active", heading.id === this.currentHeadingId);
         if (heading.id === this.currentHeadingId) {
           button.setAttribute("aria-current", "location");
@@ -947,13 +1390,120 @@ class ChatGptReader {
     });
 
     const previousScrollTop = this.list.scrollTop;
-    this.reconcileChildren(this.list, groups);
+    const children: HTMLElement[] = [];
+    if (visibleWindow.hiddenBefore > 0) {
+      children.push(this.createRevealButton("before", visibleWindow.hiddenBefore));
+    }
+    children.push(...groups);
+    if (visibleWindow.hiddenAfter > 0) {
+      children.push(this.createRevealButton("after", visibleWindow.hiddenAfter));
+    }
+    if (this.extraAnswersBefore > 0 || this.extraAnswersAfter > 0) {
+      const collapse = this.listContent.querySelector<HTMLButtonElement>(":scope > [data-gpt-reader-reveal-collapse]") ??
+        document.createElement("button");
+      collapse.type = "button";
+      collapse.className = "gpt-reader-reveal-collapse";
+      collapse.dataset.gptReaderRevealCollapse = "";
+      collapse.textContent = "收起额外回答";
+      children.push(collapse);
+    }
+    this.reconcileChildren(this.listContent, children);
+    this.scheduleSmartHeight();
     if (this.manualListBrowsing) {
       this.list.scrollTop = previousScrollTop;
     }
-    this.positionActiveDot();
     this.keepActiveHeadingInView();
     this.renderCollapsedRail();
+    this.promptPreview?.refresh();
+  }
+
+  private updateAnswerHeader(
+    group: HTMLElement,
+    answerId: string,
+    isExpanded: boolean,
+    isCurrentAnswer: boolean,
+    canExpand = true
+  ): HTMLElement {
+    const header = group.querySelector<HTMLElement>(":scope > .gpt-reader-answer-title") ??
+      document.createElement("div");
+    header.className = "gpt-reader-answer-title";
+    header.classList.toggle("is-collapsed", !isExpanded);
+    let toggle = header.querySelector<HTMLButtonElement>("[data-gpt-reader-answer-toggle]");
+    if (!toggle) {
+      toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.dataset.gptReaderAnswerToggle = "";
+      toggle.innerHTML = `<span class="gpt-reader-answer-caret" aria-hidden="true"></span><time class="gpt-reader-answer-time"></time><span class="gpt-reader-answer-time-fallback">回答</span>`;
+      header.append(toggle);
+    }
+    toggle.dataset.gptReaderAnswerId = answerId;
+    toggle.disabled = !canExpand;
+    toggle.setAttribute("aria-expanded", String(isExpanded));
+    if (isCurrentAnswer) toggle.setAttribute("aria-current", "true");
+    else toggle.removeAttribute("aria-current");
+    const caret = toggle.querySelector<HTMLElement>(".gpt-reader-answer-caret");
+    if (caret && caret.dataset.expanded !== String(isExpanded)) {
+      caret.innerHTML = getAnswerChevronIcon(isExpanded);
+      caret.dataset.expanded = String(isExpanded);
+    }
+    const metadata = this.answerMetadata.get(answerId);
+    const time = toggle.querySelector<HTMLTimeElement>(".gpt-reader-answer-time");
+    const fallback = toggle.querySelector<HTMLElement>(".gpt-reader-answer-time-fallback");
+    if (time) {
+      const hasTime = metadata?.createdAtMs !== null && metadata?.createdAtMs !== undefined;
+      time.hidden = !hasTime;
+      if (fallback) fallback.hidden = hasTime;
+      time.textContent = hasTime ? formatAnswerTime(metadata!.createdAtMs!) : "";
+      if (hasTime) time.dateTime = new Date(metadata!.createdAtMs!).toISOString();
+      else time.removeAttribute("datetime");
+    }
+    toggle.setAttribute("aria-label", `${isExpanded ? "折叠" : "展开"}${time?.textContent || "回答"}`);
+    toggle.removeAttribute("title");
+
+    let prompt = header.querySelector<HTMLButtonElement>("[data-gpt-reader-prompt-jump]");
+    if (!prompt) {
+      prompt = document.createElement("button");
+      prompt.type = "button";
+      prompt.className = "gpt-reader-answer-prompt";
+      prompt.dataset.gptReaderPromptJump = "";
+      header.append(prompt);
+    }
+    prompt.dataset.gptReaderPromptJump = answerId;
+    prompt.disabled = !metadata?.prompt;
+    const promptLabel = metadata?.prompt || "暂无提问";
+    if (prompt.textContent !== promptLabel) prompt.textContent = promptLabel;
+    prompt.removeAttribute("title");
+    prompt.setAttribute("aria-label", metadata?.prompt
+      ? `跳转到提问：${metadata.prompt}` : "提问暂不可用");
+
+    header.querySelector("em")?.remove();
+    return header;
+  }
+
+  private getEmptyCurrentInsertionIndex(): number {
+    const active = this.answerSnapshots.find((snapshot) => snapshot.id === this.currentAnswerId)?.element;
+    if (!active) return this.displayOutlines.length;
+    const currentIndex = getTurnIndex(this.getMessageContainer(active));
+    const nextIndex = this.displayOutlines.findIndex((outline) => {
+      const cached = this.cachedAnswers.get(outline.id);
+      if (currentIndex !== null && cached?.turnIndex !== null && cached?.turnIndex !== undefined) {
+        return cached.turnIndex > currentIndex;
+      }
+      const other = cached?.container;
+      return Boolean(other?.isConnected && active.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    return nextIndex < 0 ? this.displayOutlines.length : nextIndex;
+  }
+
+  private createRevealButton(side: "before" | "after", count: number): HTMLButtonElement {
+    const button = this.listContent?.querySelector<HTMLButtonElement>(
+      `:scope > [data-gpt-reader-reveal="${side}"]`
+    ) ?? document.createElement("button");
+    button.type = "button";
+    button.className = "gpt-reader-reveal";
+    button.dataset.gptReaderReveal = side;
+    button.textContent = side === "before" ? `更早 ${count} 轮` : `更晚 ${count} 轮`;
+    return button;
   }
 
   private reconcileChildren(parent: HTMLElement, children: HTMLElement[]): void {
@@ -992,29 +1542,8 @@ class ChatGptReader {
     this.renderCollapsedRail();
   }
 
-  private positionActiveDot(): void {
-    if (!this.list || !this.activeDot) {
-      return;
-    }
-
-    const activeItem = this.getActiveListItem();
-    if (!activeItem) {
-      this.activeDot.style.opacity = "0";
-      return;
-    }
-
-    const listRect = this.list.getBoundingClientRect();
-    const activeRect = activeItem.getBoundingClientRect();
-    const top = Math.min(
-      Math.max(6, this.list.clientHeight - 6),
-      Math.max(6, activeRect.top - listRect.top + activeRect.height / 2)
-    );
-    this.activeDot.style.opacity = "1";
-    this.activeDot.style.transform = `translateY(${top}px)`;
-  }
-
   private keepActiveHeadingInView(forceAlignment = false): void {
-    if (!this.list || this.manualListBrowsing) {
+    if (!this.list || this.manualListBrowsing && !forceAlignment) {
       return;
     }
 
@@ -1038,7 +1567,6 @@ class ChatGptReader {
       this.list.scrollTop = nextScrollTop;
     }
 
-    window.requestAnimationFrame(() => this.positionActiveDot());
   }
 
   private getActiveListItem(): HTMLElement | null {
@@ -1050,6 +1578,142 @@ class ChatGptReader {
       this.list.querySelector<HTMLElement>(".gpt-reader-heading.is-active") ??
       this.list.querySelector<HTMLElement>(".gpt-reader-answer.is-current .gpt-reader-answer-title")
     );
+  }
+
+  private resolvePromptElement(answerId: string): HTMLElement | null {
+    const metadata = this.answerMetadata.get(answerId);
+    if (!metadata?.prompt) return null;
+    const users = Array.from(document.querySelectorAll<HTMLElement>(USER_SELECTOR));
+    if (metadata.promptMessageId) {
+      const byId = users.find((user) => getMessageId(user) === metadata.promptMessageId);
+      if (byId) return byId;
+    }
+    if (metadata.promptTurnIndex !== null && metadata.promptTurnIndex !== undefined) {
+      const byTurn = users.find((user) =>
+        getTurnIndex(this.getMessageContainer(user)) === metadata.promptTurnIndex &&
+        normalizePrompt(user.textContent ?? "") === metadata.prompt
+      );
+      if (byTurn) return byTurn;
+    }
+    if (metadata.promptMessageId || metadata.promptTurnIndex !== null &&
+      metadata.promptTurnIndex !== undefined) return null;
+    const matching = users.filter((user) => normalizePrompt(user.textContent ?? "") === metadata.prompt);
+    return matching.length === 1 ? matching[0] : null;
+  }
+
+  private scrollToPrompt(answerId: string | undefined): void {
+    if (!answerId || !this.answerMetadata.get(answerId)?.prompt) {
+      this.showJumpStatus("对应提问暂不可用");
+      return;
+    }
+    const scrollContainer = this.getPageScrollContainer();
+    const origin: JumpOrigin = {
+      answerId: this.currentAnswerId,
+      headingId: this.currentHeadingId,
+      clickedHeading: this.clickedHeading,
+      promptJumpAnswerId: this.promptJumpAnswerId,
+      scrollContainer,
+      scrollTop: scrollContainer?.scrollTop ?? window.scrollY,
+      forcedVisibleAnswerId: this.forcedVisibleAnswerId
+    };
+    const previousAnswerId = this.currentAnswerId;
+    this.currentAnswerId = answerId;
+    this.currentHeadingId = null;
+    this.clickedHeading = null;
+    this.promptJumpAnswerId = answerId;
+    this.jumpInProgress = true;
+    this.manualListBrowsing = true;
+    const jumpGeneration = ++this.jumpGeneration;
+    this.showJumpStatus("正在定位提问…");
+    void this.completePromptJump(answerId, jumpGeneration, location.href, origin);
+    if (previousAnswerId !== answerId) this.renderList();
+    else this.syncActiveHeading(origin.headingId);
+  }
+
+  private async completePromptJump(
+    answerId: string,
+    jumpGeneration: number,
+    pageUrl: string,
+    origin: JumpOrigin
+  ): Promise<void> {
+    const isCancelled = (): boolean =>
+      jumpGeneration !== this.jumpGeneration || location.href !== pageUrl;
+    let target = this.resolvePromptElement(answerId);
+    let succeeded = false;
+    let failure = "对应提问尚未载入，请稍后重试";
+    try {
+      if (target?.closest(`[${HIDDEN_ROUND_ATTR}="true"]`)) {
+        this.forcedVisibleAnswerId = answerId;
+        this.scan(true);
+        target = this.resolvePromptElement(answerId);
+      }
+      if (!target) {
+        const container = this.cachedAnswers.get(answerId)?.container;
+        if (container?.isConnected) {
+          if (container.closest(`[${HIDDEN_ROUND_ATTR}="true"]`)) {
+            this.exposeRoundsDuringSeek = true;
+            this.scan(true);
+          }
+          scrollElementNearViewport(container);
+          for (let attempt = 0; attempt < 8 && !target && !isCancelled(); attempt += 1) {
+            await new Promise((resolve) => window.setTimeout(resolve, 100));
+            target = this.resolvePromptElement(answerId);
+          }
+        }
+      }
+      if (!target && !isCancelled()) {
+        target = await this.seekUnmountedTarget(
+          answerId, () => this.resolvePromptElement(answerId), isCancelled,
+          this.answerMetadata.get(answerId)?.promptTurnIndex, -1
+        );
+      }
+      if (!target || isCancelled()) return;
+      if (this.exposeRoundsDuringSeek) {
+        this.forcedVisibleAnswerId = answerId;
+        this.exposeRoundsDuringSeek = false;
+        this.scan(true);
+        target = this.resolvePromptElement(answerId);
+        if (!target) return;
+      }
+      const result = await scrollHeadingToPercent(target, 0, {
+        resolveHeading: () => this.resolvePromptElement(answerId), isCancelled
+      });
+      if (isCancelled()) return;
+      if (!result.element?.isConnected ||
+        (result.status !== "reached" && result.status !== "clamped")) {
+        failure = "提问定位未完成，请重试";
+        return;
+      }
+      this.scan();
+      const currentElement = this.resolvePromptElement(answerId) ?? result.element;
+      this.headingHighlighter.show(currentElement, {
+        enabled: this.settings.targetHighlightEnabled,
+        durationMs: this.settings.targetHighlightDurationMs,
+        resolveElement: () => this.resolvePromptElement(answerId),
+        observeRoot: this.cachedAnswers.get(answerId)?.container ?? document.body,
+        overlayHost: this.root ?? document.body
+      });
+      succeeded = true;
+    } catch {
+      failure = "提问定位失败，请重试";
+    } finally {
+      if (isCancelled()) return;
+      this.jumpInProgress = false;
+      if (succeeded) {
+        this.showJumpStatus(null);
+      } else {
+        this.exposeRoundsDuringSeek = false;
+        this.forcedVisibleAnswerId = origin.forcedVisibleAnswerId;
+        this.clickedHeading = origin.clickedHeading;
+        this.promptJumpAnswerId = origin.promptJumpAnswerId;
+        this.currentAnswerId = origin.answerId;
+        this.currentHeadingId = origin.headingId;
+        this.scan(true);
+        this.restoreJumpOrigin(origin);
+        this.showJumpStatus(failure);
+        this.queueActiveUpdate();
+      }
+    }
   }
 
   private scrollToHeading(headingId: string | undefined, answerId: string | undefined): void {
@@ -1069,18 +1733,32 @@ class ChatGptReader {
       );
     }
     if (!heading) {
+      this.showJumpStatus("目标标题已变化，请刷新目录后重试");
       return;
     }
 
+    const scrollContainer = this.getPageScrollContainer();
+    const origin: JumpOrigin = {
+      answerId: this.currentAnswerId,
+      headingId: this.currentHeadingId,
+      clickedHeading: this.clickedHeading,
+      scrollContainer,
+      scrollTop: scrollContainer?.scrollTop ?? window.scrollY,
+      forcedVisibleAnswerId: this.forcedVisibleAnswerId,
+      promptJumpAnswerId: this.promptJumpAnswerId
+    };
     const previousAnswerId = this.currentAnswerId;
     const previousHeadingId = this.currentHeadingId;
     this.currentHeadingId = heading.id;
     this.currentAnswerId = heading.answerId;
     this.clickedHeading = { id: heading.id, answerId: heading.answerId, text: heading.text };
-    this.manualListBrowsing = false;
+    this.promptJumpAnswerId = null;
+    this.jumpInProgress = true;
+    this.manualListBrowsing = true;
     const jumpGeneration = ++this.jumpGeneration;
     const pageUrl = location.href;
-    void this.completeHeadingJump(heading, jumpGeneration, pageUrl);
+    this.showJumpStatus("正在定位标题…");
+    void this.completeHeadingJump(heading, jumpGeneration, pageUrl, origin);
     if (previousAnswerId !== heading.answerId) {
       this.renderList();
     } else {
@@ -1092,51 +1770,155 @@ class ChatGptReader {
   private async completeHeadingJump(
     heading: HeadingInfo,
     jumpGeneration: number,
-    pageUrl: string
+    pageUrl: string,
+    origin: JumpOrigin
   ): Promise<void> {
     const isCancelled = (): boolean =>
       jumpGeneration !== this.jumpGeneration || location.href !== pageUrl;
+    let failure = "目标尚未载入，请稍后重试";
+    let succeeded = false;
     let target = this.resolveHeadingElement(heading);
-    if (!target) {
-      const container = this.cachedAnswers.get(heading.answerId)?.container;
-      if (!container?.isConnected) {
-        this.showJumpStatus("目标暂不可跳转，请滚动到该回答后重试");
+    try {
+      if (!target) {
+        const mounted = this.findMountedAnswer(heading.answerId);
+        if (mounted?.closest(`[${HIDDEN_ROUND_ATTR}="true"]`)) {
+          this.forcedVisibleAnswerId = heading.answerId;
+          this.scan(true);
+          target = this.resolveHeadingElement(heading);
+        }
+      }
+      if (!target) {
+        const container = this.cachedAnswers.get(heading.answerId)?.container;
+        if (container?.isConnected) {
+          if (container.closest(`[${HIDDEN_ROUND_ATTR}="true"]`)) {
+            this.exposeRoundsDuringSeek = true;
+            this.scan(true);
+          }
+          scrollElementNearViewport(container);
+          for (let attempt = 0; attempt < 8 && !target && !isCancelled(); attempt += 1) {
+            await new Promise((resolve) => window.setTimeout(resolve, 100));
+            target = this.resolveHeadingElement(heading);
+          }
+        }
+      }
+      if (!target && !isCancelled()) {
+        target = await this.seekUnmountedTarget(
+          heading.answerId, () => this.resolveHeadingElement(heading), isCancelled
+        );
+      }
+      if (!target || isCancelled()) return;
+
+      if (this.exposeRoundsDuringSeek) {
+        this.forcedVisibleAnswerId = heading.answerId;
+        this.exposeRoundsDuringSeek = false;
+        this.scan(true);
+        target = this.resolveHeadingElement(heading);
+        if (!target) return;
+      }
+      const result = await scrollHeadingToPercent(target, this.settings.headingScrollPositionPercent, {
+        resolveHeading: () => this.resolveHeadingElement(heading),
+        isCancelled
+      });
+      if (isCancelled()) return;
+      if (!result.element?.isConnected ||
+        (result.status !== "reached" && result.status !== "clamped")) {
+        failure = "定位未完成，请重试";
         return;
       }
-      container.scrollIntoView({ behavior: "instant", block: "start" });
-      for (let attempt = 0; attempt < 25 && !target && !isCancelled(); attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 80));
-        target = this.resolveHeadingElement(heading);
+      this.scan();
+      const currentElement = this.resolveHeadingElement(heading) ?? result.element;
+      this.headingHighlighter.show(currentElement, {
+        enabled: this.settings.targetHighlightEnabled,
+        durationMs: this.settings.targetHighlightDurationMs,
+        resolveElement: () => this.resolveHeadingElement(heading),
+        observeRoot: this.cachedAnswers.get(heading.answerId)?.container ?? document.body,
+        overlayHost: this.root ?? document.body
+      });
+      succeeded = true;
+    } catch {
+      failure = "定位失败，请重试";
+    } finally {
+      if (isCancelled()) return;
+      this.jumpInProgress = false;
+      if (succeeded) {
+        this.showJumpStatus(null);
+      } else {
+        this.exposeRoundsDuringSeek = false;
+        this.forcedVisibleAnswerId = origin.forcedVisibleAnswerId;
+        this.clickedHeading = origin.clickedHeading;
+        this.promptJumpAnswerId = origin.promptJumpAnswerId;
+        this.currentAnswerId = origin.answerId;
+        this.currentHeadingId = origin.headingId;
+        this.scan(true);
+        this.restoreJumpOrigin(origin);
+        this.showJumpStatus(failure);
+        this.queueActiveUpdate();
       }
     }
-    if (!target || isCancelled()) {
-      if (!isCancelled()) {
-        this.showJumpStatus("目标尚未载入，请滚动到该回答后重试");
-      }
-      return;
-    }
+  }
 
-    this.showJumpStatus(null);
-    const result = await scrollHeadingToPercent(target, this.settings.headingScrollPositionPercent, {
-      resolveHeading: () => this.resolveHeadingElement(heading),
-      isCancelled
-    });
-    if (isCancelled() || !result.element?.isConnected) {
-      return;
+  private restoreJumpOrigin(origin: JumpOrigin): void {
+    if (origin.scrollContainer?.isConnected) {
+      origin.scrollContainer.scrollTop = origin.scrollTop;
+    } else if (!origin.scrollContainer && Math.abs(window.scrollY - origin.scrollTop) > 1) {
+      window.scrollTo({ top: origin.scrollTop, behavior: "instant" });
     }
-    if (result.status !== "reached" && result.status !== "clamped") {
-      this.showJumpStatus("定位未完成，请重试");
-      return;
+  }
+
+  private getPageScrollContainer(): HTMLElement | null {
+    if (this.activeScrollContainer?.isConnected) return this.activeScrollContainer;
+    const answer = this.answerSnapshots.find((snapshot) => snapshot.element.isConnected)?.element ??
+      this.collectAnswerElements()[0];
+    this.activeScrollContainer = answer ? findNearestVerticalScrollContainer(answer) : null;
+    return this.activeScrollContainer;
+  }
+
+  private findMountedAnswer(answerId: string): HTMLElement | null {
+    return Array.from(document.querySelectorAll<HTMLElement>(ASSISTANT_SELECTOR)).find(
+      (element) => ensureAnswerId(element) === answerId
+    ) ?? null;
+  }
+
+  private async seekUnmountedTarget(
+    answerId: string,
+    resolveTarget: () => HTMLElement | null,
+    isCancelled: () => boolean,
+    targetTurnIndex?: number | null,
+    directionOnEqual: -1 | 1 = 1
+  ): Promise<HTMLElement | null> {
+    const targetIndex = targetTurnIndex ?? this.cachedAnswers.get(answerId)?.turnIndex;
+    if (targetIndex === null || targetIndex === undefined) return null;
+    this.exposeRoundsDuringSeek = true;
+    this.scan(true);
+    const scrollContainer = this.getPageScrollContainer();
+    const deadline = performance.now() + 5000;
+    let stalled = 0;
+    let lastPosition = scrollContainer?.scrollTop ?? window.scrollY;
+    for (let step = 0; step < 20 && performance.now() < deadline && !isCancelled(); step += 1) {
+      const target = resolveTarget();
+      if (target) return target;
+      const mounted = this.collectAnswerElements()
+        .map((element) => ({
+          element,
+          index: getTurnIndex(this.getMessageContainer(element))
+        }))
+        .filter((item): item is { element: HTMLElement; index: number } => item.index !== null);
+      const nearest = mounted.sort((a, b) => Math.abs(a.index - targetIndex) - Math.abs(b.index - targetIndex))[0];
+      if (!nearest) return null;
+      const direction = targetIndex === nearest.index ? directionOnEqual :
+        targetIndex < nearest.index ? -1 : 1;
+      if (step === 0) scrollElementNearViewport(nearest.element, 50);
+      const distance = Math.max(240, (scrollContainer?.clientHeight ?? window.innerHeight) * 0.8);
+      if (scrollContainer) scrollContainer.scrollBy({ top: direction * distance, behavior: "instant" });
+      else window.scrollBy({ top: direction * distance, behavior: "instant" });
+      await new Promise((resolve) => window.setTimeout(resolve, 160));
+      this.scan();
+      const position = scrollContainer?.scrollTop ?? window.scrollY;
+      stalled = Math.abs(position - lastPosition) < 1 ? stalled + 1 : 0;
+      if (stalled >= 3) return null;
+      lastPosition = position;
     }
-    this.scan();
-    const currentElement = this.resolveHeadingElement(heading) ?? result.element;
-    this.headingHighlighter.show(currentElement, {
-      enabled: this.settings.targetHighlightEnabled,
-      durationMs: this.settings.targetHighlightDurationMs,
-      resolveElement: () => this.resolveHeadingElement(heading),
-      observeRoot: this.cachedAnswers.get(heading.answerId)?.container ?? document.body,
-      overlayHost: this.root ?? document.body
-    });
+    return resolveTarget();
   }
 
   private showJumpStatus(message: string | null): void {
@@ -1152,7 +1934,15 @@ class ChatGptReader {
     const answer = this.collectAnswerElements().find(
       (element) => ensureAnswerId(element) === heading.answerId
     );
-    return answer?.querySelectorAll<HTMLElement>(headingSelector)[heading.order] ?? null;
+    if (!answer) return null;
+    const elements = Array.from(answer.querySelectorAll<HTMLElement>(headingSelector));
+    const sameHeading = (element: HTMLElement): boolean =>
+      element.textContent?.replace(/\s+/g, " ").trim() === heading.text &&
+      Number(element.tagName.slice(1)) === heading.depth && isVisibleHeading(element);
+    const original = elements[heading.order];
+    if (original && sameHeading(original)) return original;
+    const matches = elements.filter(sameHeading);
+    return matches.length === 1 ? matches[0] : null;
   }
 
   private toggleSettings(): void {
@@ -1162,13 +1952,38 @@ class ChatGptReader {
       return;
     }
 
-    const nextOpen = settings.hidden;
+    const nextOpen = settings.hidden !== false;
     settings.hidden = !nextOpen;
+    this.root?.classList.toggle("is-settings-open", nextOpen);
     toggle.setAttribute("aria-expanded", String(nextOpen));
+    if (nextOpen) this.positionSettingsPopover();
+  }
+
+  private positionSettingsPopover(): void {
+    const panel = this.root?.querySelector<HTMLElement>(".gpt-reader-panel");
+    const header = this.root?.querySelector<HTMLElement>(".gpt-reader-header");
+    const settings = this.root?.querySelector<HTMLElement>("[data-gpt-reader-settings]");
+    if (!panel || !header || !settings || settings.hidden) return;
+    const panelRect = panel.getBoundingClientRect();
+    const headerRect = header.getBoundingClientRect();
+    const availableBelow = window.innerHeight - headerRect.bottom - PANEL_EDGE_MARGIN;
+    const availableAbove = headerRect.top - PANEL_EDGE_MARGIN;
+    const openAbove = availableBelow < 240 && availableAbove > availableBelow;
+    const maximum = Math.max(0, Math.min(420, (openAbove ? availableAbove : availableBelow) - 6));
+    settings.style.maxHeight = `${maximum}px`;
+    settings.style.top = openAbove ? "auto" : `${headerRect.bottom - panelRect.top + 6}px`;
+    settings.style.bottom = openAbove ? `${panelRect.bottom - headerRect.top + 6}px` : "auto";
   }
 
   private async updateSettings(patch: Partial<TocSettings>): Promise<void> {
     const revision = ++this.settingsRevision;
+    if (patch.maxVisibleRounds !== undefined) {
+      this.forcedVisibleAnswerId = null;
+      this.exposeRoundsDuringSeek = false;
+      this.jumpGeneration += 1;
+      this.jumpInProgress = false;
+      this.showJumpStatus(null);
+    }
     this.settings = mergeSettings(this.settings, patch);
     const nextSettings = this.settings;
     this.scan(true);
@@ -1201,19 +2016,10 @@ class ChatGptReader {
     status.classList.toggle("is-error", isError);
   }
 
-  private parseRoundLimit(value: string): number {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) {
-      return 0;
-    }
-
-    return Math.min(50, Math.max(0, Math.trunc(parsed)));
-  }
-
   private applyRoundLimit(): void {
     this.restoreHiddenRounds();
 
-    if (!this.settings.enabled || this.settings.maxVisibleRounds <= 0) {
+    if (!this.settings.enabled || this.settings.maxVisibleRounds <= 0 || this.exposeRoundsDuringSeek) {
       this.removeRoundLimitBanner();
       return;
     }
@@ -1224,11 +2030,16 @@ class ChatGptReader {
       return;
     }
 
-    const hiddenRounds = rounds.slice(0, -this.settings.maxVisibleRounds);
-    const visibleRounds = rounds.slice(-this.settings.maxVisibleRounds);
-    const firstVisibleContainer = visibleRounds[0]?.containers[0];
+    const visibleRounds = new Set(rounds.slice(-this.settings.maxVisibleRounds));
+    if (this.forcedVisibleAnswerId) {
+      const mounted = this.findMountedAnswer(this.forcedVisibleAnswerId);
+      const forcedRound = rounds.find((round) => mounted && round.containers.some((container) => container.contains(mounted)));
+      if (forcedRound) visibleRounds.add(forcedRound);
+    }
+    const firstVisibleContainer = rounds.find((round) => visibleRounds.has(round))?.containers[0];
 
-    for (const round of hiddenRounds) {
+    for (const round of rounds) {
+      if (visibleRounds.has(round)) continue;
       for (const container of round.containers) {
         this.hideRoundContainer(container);
       }
@@ -1292,7 +2103,7 @@ class ChatGptReader {
         continue;
       }
 
-      const role = message.dataset.messageAuthorRole;
+      const role = getMessageRole(message);
       const container = this.getMessageContainer(message);
       if (!container || container.id === ROUND_LIMIT_BANNER_ID) {
         continue;
@@ -1375,6 +2186,12 @@ class ChatGptReader {
   }
 
   private findActiveSelection(): { answerId: string | null; headingId: string | null } {
+    if (this.promptJumpAnswerId) {
+      return { answerId: this.promptJumpAnswerId, headingId: null };
+    }
+    if (this.jumpInProgress && this.clickedHeading) {
+      return { answerId: this.clickedHeading.answerId, headingId: this.clickedHeading.id };
+    }
     if (this.clickedHeading) {
       const selected = this.allHeadings.find((heading) =>
         heading.id === this.clickedHeading?.id &&
@@ -1388,7 +2205,7 @@ class ChatGptReader {
       }
       const cached = this.cachedAnswers.get(this.clickedHeading.answerId);
       if (
-        cached?.container.isConnected &&
+        cached?.container?.isConnected &&
         cached.outline.headings.some((heading) =>
           heading.id === this.clickedHeading?.id && heading.text === this.clickedHeading?.text
         )
@@ -1414,8 +2231,7 @@ class ChatGptReader {
   }
 
   private getActiveAnchorY(): number {
-    const firstAnswer = this.answerSnapshots[0]?.element;
-    const container = firstAnswer && findNearestVerticalScrollContainer(firstAnswer);
+    const container = this.getPageScrollContainer();
     if (container) {
       const rect = container.getBoundingClientRect();
       const top = Math.max(0, rect.top);
@@ -1436,20 +2252,25 @@ class ChatGptReader {
     const width = this.readStoredNumber(storedState.width) ?? legacyWidth;
     const height = this.readStoredNumber(storedState.height) ?? legacyHeight;
     this.panelMode = storedState.mode === "rail" ? "rail" : "expanded";
-    this.heightMode = storedState.heightMode === "viewport" || storedState.heightMode === "fixed"
+    this.heightMode = storedState.heightMode === "smart" || storedState.heightMode === "viewport" || storedState.heightMode === "fixed"
       ? storedState.heightMode
-      : height === undefined ? "viewport" : "fixed";
+      : height === undefined ? "smart" : "fixed";
     this.heightPercent = normalizeHeightPercent(storedState.heightPercent);
     this.centerYRatio = normalizeCenterRatio(storedState.centerYRatio);
 
     if (width !== undefined) {
       this.panelWidth = this.constrainPanelWidth(width);
     }
+    const lastReadableWidth = this.readStoredNumber(storedState.lastReadableWidth);
+    this.lastReadableWidth = lastReadableWidth !== undefined &&
+      lastReadableWidth >= NARROW_PANEL_WIDTH
+      ? this.constrainPanelWidth(lastReadableWidth)
+      : this.panelWidth >= NARROW_PANEL_WIDTH ? this.panelWidth : DEFAULT_PANEL_WIDTH;
 
     this.panelPosition = normalizePanelPosition(storedState.position) ?? legacyPosition;
 
     if (height !== undefined) {
-      this.panelHeight = Math.max(MIN_PANEL_HEIGHT, height);
+      this.panelHeight = Math.max(MIN_FIXED_PANEL_HEIGHT, height);
     }
   }
 
@@ -1479,6 +2300,7 @@ class ChatGptReader {
   private async savePanelUiState(): Promise<void> {
     const state: PanelUiState = {
       width: Math.round(this.panelWidth),
+      lastReadableWidth: Math.round(this.lastReadableWidth),
       height: Math.round(this.panelHeight),
       heightMode: this.heightMode,
       heightPercent: this.heightPercent,
@@ -1511,6 +2333,22 @@ class ChatGptReader {
 
   private applyPanelWidth(): void {
     this.root?.style.setProperty("--gpt-reader-width", `${this.panelWidth}px`);
+    this.root?.classList.toggle("is-ultra-narrow", this.panelWidth < NARROW_PANEL_WIDTH);
+    const rail = this.root?.querySelector<HTMLButtonElement>("[data-gpt-reader-collapsed-rail]");
+    if (rail) {
+      rail.setAttribute("aria-label", this.panelWidth < NARROW_PANEL_WIDTH
+        ? "恢复目录宽度" : "展开 ChatGPT 回答目录");
+      rail.title = this.panelWidth < NARROW_PANEL_WIDTH ? "恢复目录宽度" : "展开目录";
+    }
+  }
+
+  private restoreReadableWidth(): void {
+    this.panelWidth = this.constrainPanelWidth(this.lastReadableWidth);
+    this.applyPanelWidth();
+    this.applyPanelPosition();
+    this.scheduleSmartHeight();
+    this.panelDisclosure?.setMode("expanded");
+    void this.savePanelUiState();
   }
 
   private applyPanelDirection(): void {
@@ -1535,7 +2373,7 @@ class ChatGptReader {
   private constrainPanelHeight(height: number): number {
     const top = this.root?.getBoundingClientRect().top ?? 82;
     const maxHeight = Math.max(0, window.innerHeight - top - PANEL_EDGE_MARGIN);
-    return Math.min(maxHeight, Math.max(Math.min(MIN_PANEL_HEIGHT, maxHeight), height));
+    return Math.min(maxHeight, Math.max(Math.min(MIN_FIXED_PANEL_HEIGHT, maxHeight), height));
   }
 
   private applyPanelHeight(): void {
@@ -1546,9 +2384,15 @@ class ChatGptReader {
     const mode = this.root?.querySelector<HTMLSelectElement>("[data-gpt-reader-height-mode]");
     const percent = this.root?.querySelector<HTMLInputElement>("[data-gpt-reader-height-percent]");
     const field = this.root?.querySelector<HTMLElement>("[data-gpt-reader-height-percent-field]");
+    const label = this.root?.querySelector<HTMLElement>("[data-gpt-reader-height-percent-label]");
+    const hint = this.root?.querySelector<HTMLElement>("[data-gpt-reader-height-percent-hint]");
     if (mode) mode.value = this.heightMode;
     if (percent) percent.value = String(this.heightPercent);
-    if (field) field.hidden = this.heightMode !== "viewport";
+    if (field) field.hidden = this.heightMode === "fixed";
+    if (label) label.textContent = this.heightMode === "smart" ? "智能高度上限" : "窗口高度比例";
+    if (hint) hint.textContent = this.heightMode === "smart"
+      ? "目录较短时自动收紧；较长时最多占窗口的该比例。"
+      : "范围 30%–90%；窗口较小时会自动限制到可见范围。";
   }
 
   private setHeightMode(mode: PanelHeightMode): void {
@@ -1562,10 +2406,14 @@ class ChatGptReader {
         this.centerYRatio = normalizeCenterRatio((rect.top + rect.height / 2) / window.innerHeight);
       } else {
         this.panelPosition = { left: rect.left, top: rect.top };
+        if (mode === "fixed" && this.heightMode === "smart") {
+          this.panelHeight = rect.height;
+        }
       }
     }
     this.heightMode = mode;
     this.applyPanelPosition();
+    this.scheduleSmartHeight();
     this.syncPanelHeightControls();
     void this.savePanelUiState();
   }
@@ -1575,6 +2423,7 @@ class ChatGptReader {
     if (nextPercent !== this.heightPercent) {
       this.heightPercent = nextPercent;
       this.applyPanelPosition();
+      this.scheduleSmartHeight();
       void this.savePanelUiState();
     }
     this.syncPanelHeightControls();
@@ -1626,7 +2475,7 @@ class ChatGptReader {
       : getRenderedPanelLayout(
           this.panelPosition,
           this.panelWidth,
-          this.panelHeight,
+          this.heightMode === "smart" ? this.getMeasuredSmartHeight() : this.panelHeight,
           COLLAPSED_RAIL_WIDTH,
           this.panelExpandDirection,
           window.innerWidth,
@@ -1636,6 +2485,29 @@ class ChatGptReader {
     this.root.style.setProperty("--gpt-reader-left", `${rendered.left}px`);
     this.root.style.setProperty("--gpt-reader-top", `${rendered.top}px`);
     this.root.style.setProperty("--gpt-reader-height", `${rendered.height}px`);
+    const panelLeft = getPanelLeft(
+      rendered.left, this.panelWidth, COLLAPSED_RAIL_WIDTH, this.panelExpandDirection
+    );
+    this.root.dataset.panelSide = panelLeft + this.panelWidth / 2 >= window.innerWidth / 2
+      ? "right" : "left";
+    this.positionSettingsPopover();
+  }
+
+  private getMeasuredSmartHeight(): number {
+    if (this.panelWidth < NARROW_PANEL_WIDTH) return this.lastMeasuredSmartHeight;
+    const contentHeight = this.listContent?.getBoundingClientRect().height || this.listContent?.scrollHeight || 0;
+    const headerHeight = this.root?.querySelector<HTMLElement>(".gpt-reader-header")?.offsetHeight || 36;
+    const body = this.root?.querySelector<HTMLElement>(".gpt-reader-body");
+    const bodyStyles = body ? getComputedStyle(body) : null;
+    const measuredBodySpacing = bodyStyles
+      ? (Number.parseFloat(bodyStyles.paddingTop) || 0) +
+        (Number.parseFloat(bodyStyles.paddingBottom) || 0) : 0;
+    const bodySpacing = measuredBodySpacing || 8;
+    const status = this.root?.querySelector<HTMLElement>("[data-gpt-reader-jump-status]");
+    const statusHeight = status && !status.hidden ? status.offsetHeight : 0;
+    this.lastMeasuredSmartHeight = getSmartPanelHeight(window.innerHeight, this.heightPercent, contentHeight,
+      headerHeight + bodySpacing + statusHeight, PANEL_EDGE_MARGIN);
+    return this.lastMeasuredSmartHeight;
   }
 
   private constrainPanelPosition(left: number, top: number): PanelPosition {
@@ -1687,7 +2559,6 @@ class ChatGptReader {
       );
     }
     this.applyPanelPosition();
-    this.positionActiveDot();
   };
 
   private stopDrag = (): void => {
@@ -1705,6 +2576,7 @@ class ChatGptReader {
     this.isResizing = true;
     this.resizeStartX = event.clientX;
     this.resizeStartWidth = this.panelWidth;
+    if (this.panelWidth >= NARROW_PANEL_WIDTH) this.lastReadableWidth = this.panelWidth;
     this.root?.classList.add("is-resizing");
     this.panelDisclosure?.beginInteraction();
     window.addEventListener("pointermove", this.resizePanel);
@@ -1725,11 +2597,12 @@ class ChatGptReader {
     this.panelWidth = this.constrainPanelWidth(nextWidth);
     this.applyPanelWidth();
     this.applyPanelPosition();
-    this.positionActiveDot();
+    this.scheduleSmartHeight();
   };
 
   private stopResize = (): void => {
     this.isResizing = false;
+    if (this.panelWidth >= NARROW_PANEL_WIDTH) this.lastReadableWidth = this.panelWidth;
     this.root?.classList.remove("is-resizing");
     window.removeEventListener("pointermove", this.resizePanel);
     window.removeEventListener("pointerup", this.stopResize);
@@ -1743,6 +2616,11 @@ class ChatGptReader {
     this.isResizingHeight = true;
     this.resizeStartY = event.clientY;
     this.resizeStartHeight = this.root?.getBoundingClientRect().height ?? this.panelHeight;
+    if (this.heightMode === "smart") {
+      this.heightMode = "fixed";
+      this.panelHeight = this.resizeStartHeight;
+      this.syncPanelHeightControls();
+    }
     this.root?.classList.add("is-resizing-height");
     this.panelDisclosure?.beginInteraction();
     window.addEventListener("pointermove", this.resizePanelHeight);
@@ -1764,7 +2642,7 @@ class ChatGptReader {
       this.panelHeight = this.constrainPanelHeight(this.resizeStartHeight + delta);
     }
     this.applyPanelHeight();
-    this.positionActiveDot();
+    this.scheduleSmartHeight();
   };
 
   private stopHeightResize = (): void => {

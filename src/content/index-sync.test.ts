@@ -60,6 +60,10 @@ describe("live answer synchronization", () => {
     });
 
     const firstRailMarker = root.querySelector(".gpt-reader-collapsed-marker");
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise((resolve) => window.setTimeout(resolve, 30));
+    expect(headings.every((heading) => (heading.scrollIntoView as ReturnType<typeof vi.fn>).mock.calls.length === 0)).toBe(true);
+    expect(window.scrollBy).not.toHaveBeenCalled();
     const ninth = root.querySelectorAll<HTMLButtonElement>("[data-gpt-reader-heading]")[8];
     ninth.click();
     expect(headings[8].scrollIntoView).toHaveBeenCalledOnce();
@@ -86,6 +90,29 @@ describe("live answer synchronization", () => {
       .mockReturnValue(DOMRect.fromRect({ y: 105, width: 200, height: 30 }));
     list.scrollTop = 300;
     list.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+    await new Promise((resolve) => window.setTimeout(resolve, 120));
+    expect(window.scrollBy).not.toHaveBeenCalled();
+
+    const main = document.querySelector<HTMLElement>("main")!;
+    main.style.overflowY = "auto";
+    Object.defineProperty(main, "clientHeight", { configurable: true, value: 500 });
+    Object.defineProperty(main, "scrollHeight", { configurable: true, value: 2000 });
+    const scrollMain = vi.fn();
+    main.scrollBy = scrollMain;
+    Object.defineProperty(list, "clientHeight", { configurable: true, value: 1550 });
+    const shortListWheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 320 });
+    list.dispatchEvent(shortListWheel);
+    expect(shortListWheel.defaultPrevented).toBe(true);
+    expect(scrollMain).toHaveBeenCalledWith({ top: 320, behavior: "instant" });
+    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 1556 });
+    const tinyOverflowWheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 320 });
+    list.dispatchEvent(tinyOverflowWheel);
+    expect(tinyOverflowWheel.defaultPrevented).toBe(true);
+    expect(scrollMain).toHaveBeenCalledTimes(2);
+    Object.defineProperty(list, "clientHeight", { configurable: true, value: 652 });
+    list.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 320 }));
+    expect(scrollMain).toHaveBeenCalledTimes(2);
+
     window.dispatchEvent(new Event("resize"));
     await new Promise((resolve) => window.setTimeout(resolve, 30));
     expect(list.scrollTop).toBe(300);
@@ -105,7 +132,7 @@ describe("live answer synchronization", () => {
     emptyTop = 0;
     window.dispatchEvent(new Event("scroll"));
     await vi.waitFor(() => {
-      expect(root.querySelector("[data-gpt-reader-list]")?.textContent).toContain("当前回答还没有 Markdown 标题");
+      expect(root.querySelector(".gpt-reader-answer.is-current")?.textContent).toContain("当前回答暂无 Markdown 标题");
       expect(root.querySelector("[data-gpt-reader-collapsed-rail]")?.getAttribute("aria-label"))
         .toContain("当前回答暂无标题");
     });

@@ -54,11 +54,7 @@ describe("panel settings application", () => {
     await vi.waitFor(() => expect(saved().wrapLongTitles).toBe(false));
     expect(root.classList.contains("is-title-wrap-enabled")).toBe(false);
 
-    const rounds = root.querySelector<HTMLInputElement>("[data-gpt-reader-max-rounds]")!;
-    rounds.value = "1";
-    rounds.dispatchEvent(new Event("change", { bubbles: true }));
-    await vi.waitFor(() => expect(saved().maxVisibleRounds).toBe(1));
-    expect(document.querySelector("#gpt-reader-round-limit-banner")).not.toBeNull();
+    expect(root.querySelector("[data-gpt-reader-max-rounds]")).toBeNull();
 
     const enabled = root.querySelector<HTMLInputElement>("[data-gpt-reader-enabled]")!;
     enabled.checked = false;

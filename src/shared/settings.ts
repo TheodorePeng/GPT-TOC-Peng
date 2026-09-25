@@ -1,15 +1,18 @@
 export type HeadingDepth = 1 | 2 | 3 | 4 | 5 | 6;
 
-export type TargetHighlightDurationMs = 800 | 1500 | 3000;
+export type TargetHighlightDurationMs = number;
 
 export type TocSettings = {
   enabled: boolean;
   maxDepth: HeadingDepth;
   expandCurrentOnly: boolean;
+  visibleAnswersBeforeCurrent: number;
+  visibleAnswersAfterCurrent: number;
   maxVisibleRounds: number;
   hoverExpandEnabled: boolean;
   targetHighlightEnabled: boolean;
   targetHighlightDurationMs: TargetHighlightDurationMs;
+  panelSurfaceOpacityPercent: number | null;
   wrapLongTitles: boolean;
   headingScrollPositionPercent: number;
 };
@@ -18,10 +21,13 @@ export const DEFAULT_SETTINGS: TocSettings = {
   enabled: true,
   maxDepth: 2,
   expandCurrentOnly: true,
+  visibleAnswersBeforeCurrent: 2,
+  visibleAnswersAfterCurrent: 1,
   maxVisibleRounds: 0,
   hoverExpandEnabled: true,
   targetHighlightEnabled: true,
   targetHighlightDurationMs: 1500,
+  panelSurfaceOpacityPercent: null,
   wrapLongTitles: true,
   headingScrollPositionPercent: 25
 };
@@ -38,7 +44,14 @@ const isDepth = (value: unknown): value is HeadingDepth =>
   value <= 6;
 
 const isHighlightDuration = (value: unknown): value is TargetHighlightDurationMs =>
-  value === 800 || value === 1500 || value === 3000;
+  typeof value === "number" && Number.isInteger(value) &&
+  value >= 100 && value <= 10_000 && value % 10 === 0;
+
+const isPanelSurfaceOpacity = (value: unknown): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 100;
+
+const isNeighborCount = (value: unknown): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 20;
 
 export const normalizeHeadingScrollPositionPercent = (value: unknown): number => {
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -65,6 +78,10 @@ const normalizeSettings = (value: unknown): TocSettings => {
       typeof input.expandCurrentOnly === "boolean"
         ? input.expandCurrentOnly
         : DEFAULT_SETTINGS.expandCurrentOnly,
+    visibleAnswersBeforeCurrent: isNeighborCount(input.visibleAnswersBeforeCurrent)
+      ? input.visibleAnswersBeforeCurrent : DEFAULT_SETTINGS.visibleAnswersBeforeCurrent,
+    visibleAnswersAfterCurrent: isNeighborCount(input.visibleAnswersAfterCurrent)
+      ? input.visibleAnswersAfterCurrent : DEFAULT_SETTINGS.visibleAnswersAfterCurrent,
     maxVisibleRounds,
     hoverExpandEnabled:
       typeof input.hoverExpandEnabled === "boolean"
@@ -77,6 +94,9 @@ const normalizeSettings = (value: unknown): TocSettings => {
     targetHighlightDurationMs: isHighlightDuration(input.targetHighlightDurationMs)
       ? input.targetHighlightDurationMs
       : DEFAULT_SETTINGS.targetHighlightDurationMs,
+    panelSurfaceOpacityPercent: isPanelSurfaceOpacity(input.panelSurfaceOpacityPercent)
+      ? input.panelSurfaceOpacityPercent
+      : null,
     wrapLongTitles:
       typeof input.wrapLongTitles === "boolean"
         ? input.wrapLongTitles

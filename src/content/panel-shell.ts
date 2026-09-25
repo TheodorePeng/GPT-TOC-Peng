@@ -30,7 +30,7 @@ export const createPanelShell = (): HTMLElement => {
   root.innerHTML = `
     <section class="gpt-reader-panel" aria-label="ChatGPT 回答目录">
       <header class="gpt-reader-header">
-        <div class="gpt-reader-drag-region" data-gpt-reader-drag title="拖动目录" aria-hidden="true"></div>
+        <div class="gpt-reader-drag-region" data-gpt-reader-drag title="拖动目录；聚焦后可用方向键移动" tabindex="0" aria-label="移动目录位置；使用方向键微调"></div>
         <div class="gpt-reader-header-actions">
           <button type="button" class="gpt-reader-icon-button" data-gpt-reader-direction aria-label="当前向右展开，点击改为向左展开">
             ${directionIcon}
@@ -44,7 +44,7 @@ export const createPanelShell = (): HTMLElement => {
         </div>
       </header>
       <p class="gpt-reader-jump-status" data-gpt-reader-jump-status role="status" aria-live="polite" hidden></p>
-      <form class="gpt-reader-settings" data-gpt-reader-settings hidden>
+      <form class="gpt-reader-settings" data-gpt-reader-settings aria-label="目录快捷设置" hidden>
         <label class="gpt-reader-switch">
           <input type="checkbox" data-gpt-reader-enabled />
           <span>启用目录</span>
@@ -52,14 +52,15 @@ export const createPanelShell = (): HTMLElement => {
         <label class="gpt-reader-field">
           <span>目录高度</span>
           <select data-gpt-reader-height-mode>
+            <option value="smart">智能适应内容</option>
             <option value="fixed">固定高度</option>
             <option value="viewport">按窗口比例</option>
           </select>
         </label>
         <label class="gpt-reader-field" data-gpt-reader-height-percent-field hidden>
-          <span>窗口高度比例</span>
+          <span data-gpt-reader-height-percent-label>窗口高度比例</span>
           <span class="gpt-reader-percent-input"><input type="number" min="30" max="90" step="1" data-gpt-reader-height-percent /><span>%</span></span>
-          <p>范围 30%–90%；窗口较小时会自动限制到可见范围。</p>
+          <small data-gpt-reader-height-percent-hint>范围 30%–90%</small>
         </label>
         <div class="gpt-reader-field">
           <span>目录最大层级</span>
@@ -69,24 +70,23 @@ export const createPanelShell = (): HTMLElement => {
           <input type="checkbox" data-gpt-reader-expand-current />
           <span>只展开当前回答</span>
         </label>
-        <label class="gpt-reader-field">
-          <span>保留最近问答轮数</span>
-          <input type="number" min="0" max="50" step="1" data-gpt-reader-max-rounds />
-          <p>0 表示不限制；长会话建议 3-5 轮。</p>
-        </label>
+        <div class="gpt-reader-neighbor-counts">
+          <label class="gpt-reader-field"><span>上方回答</span>
+            <input type="number" min="0" max="20" step="1" data-gpt-reader-before-count />
+          </label>
+          <label class="gpt-reader-field"><span>下方回答</span>
+            <input type="number" min="0" max="20" step="1" data-gpt-reader-after-count />
+          </label>
+        </div>
         <label class="gpt-reader-switch">
           <input type="checkbox" data-gpt-reader-wrap-titles />
           <span>长标题自动换行</span>
         </label>
-        <p>其他回答默认折叠，可点击回答标题展开。</p>
-        <p>悬浮展开、跳转位置和正文高亮可在扩展图标弹窗中设置。</p>
+        <p class="gpt-reader-more-settings">更多设置请点击浏览器扩展图标。</p>
         <p data-gpt-reader-panel-save-status role="status" aria-live="polite" hidden></p>
       </form>
       <div class="gpt-reader-body">
-        <div class="gpt-reader-rail" aria-hidden="true">
-          <span data-gpt-reader-active-dot></span>
-        </div>
-        <nav data-gpt-reader-list></nav>
+        <nav data-gpt-reader-list><div data-gpt-reader-list-content></div></nav>
       </div>
       <div class="gpt-reader-resize-handle" data-gpt-reader-resize title="拖拽调整目录宽度" aria-hidden="true"></div>
       <div class="gpt-reader-resize-height-handle" data-gpt-reader-resize-height title="拖拽调整目录高度" aria-hidden="true"></div>

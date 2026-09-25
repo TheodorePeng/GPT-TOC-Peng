@@ -1,11 +1,12 @@
 #gpt-reader-root {
-  --gpt-reader-surface: rgba(255, 255, 255, 0.92);
+  --gpt-reader-surface-rgb: 255 255 255;
+  --gpt-reader-surface-alpha: 0.92;
   --gpt-reader-text: #171717;
   --gpt-reader-muted: #595959;
   --gpt-reader-subtle: #757575;
   --gpt-reader-border: rgba(0, 0, 0, 0.11);
-  --gpt-reader-hover: #ededed;
-  --gpt-reader-active-bg: rgba(16, 163, 127, 0.18);
+  --gpt-reader-hover: rgb(0 0 0 / calc(var(--gpt-reader-surface-alpha) * 0.07));
+  --gpt-reader-active-bg: rgb(16 163 127 / calc(var(--gpt-reader-surface-alpha) * 0.18));
   --gpt-reader-active-text: #073b31;
   --gpt-reader-rail-h1: #e58a4a;
   --gpt-reader-rail-h2: #d9b51c;
@@ -37,18 +38,18 @@
 }
 
 .gpt-reader-panel {
-  background: var(--gpt-reader-surface);
-  border: 1px solid var(--gpt-reader-border);
+  background: transparent;
+  border: 0;
   border-radius: 8px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.06);
+  box-shadow: none;
   color: var(--gpt-reader-text);
   display: flex;
   flex-direction: column;
   height: 100%;
   left: 0;
   max-height: calc(100vh - var(--gpt-reader-top, 82px) - 8px);
-  overflow: hidden;
-  pointer-events: auto;
+  overflow: visible;
+  pointer-events: none;
   position: absolute;
   top: 0;
   transition:
@@ -64,12 +65,24 @@
 
 .gpt-reader-header {
   align-items: center;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
+  background: rgb(var(--gpt-reader-surface-rgb) / var(--gpt-reader-surface-alpha));
+  border: 1px solid var(--gpt-reader-border);
+  border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
   display: flex;
-  gap: 4px;
-  height: 34px;
-  justify-content: space-between;
-  padding: 3px 5px;
+  flex: 0 0 36px;
+  gap: 2px;
+  height: 36px;
+  padding: 1px 2px;
+  pointer-events: auto;
+  width: max-content;
+  max-width: 100%;
+  align-self: flex-start;
+}
+
+#gpt-reader-root[data-expand-direction="left"] .gpt-reader-header {
+  align-self: flex-end;
+  margin-right: var(--gpt-reader-scrollbar-gutter, 0px);
 }
 
 .gpt-reader-drag-region {
@@ -77,8 +90,26 @@
   align-self: stretch;
   cursor: grab;
   display: flex;
-  flex: 1 1 auto;
-  min-width: 24px;
+  border-radius: 6px;
+  flex: 0 0 16px;
+  width: 16px;
+}
+
+.gpt-reader-drag-region::before {
+  content: "";
+  width: 8px;
+  height: 12px;
+  margin: auto;
+  background: radial-gradient(circle, currentColor 1px, transparent 1.5px) 0 0 / 4px 4px;
+  color: var(--gpt-reader-subtle);
+  opacity: 0.28;
+  transition: opacity 120ms ease;
+}
+
+.gpt-reader-drag-region:hover::before,
+.gpt-reader-drag-region:focus-visible::before,
+#gpt-reader-root.is-dragging .gpt-reader-drag-region::before {
+  opacity: 0.85;
 }
 
 #gpt-reader-root.is-dragging .gpt-reader-drag-region {
@@ -116,14 +147,14 @@
   color: #5c5c5c;
   display: inline-flex;
   justify-content: center;
-  height: 28px;
-  padding: 6px;
-  width: 28px;
+  height: 32px;
+  padding: 7px;
+  width: 32px;
 }
 
 .gpt-reader-icon-button svg {
-  height: 16px;
-  width: 16px;
+  height: 14px;
+  width: 14px;
 }
 
 .gpt-reader-icon-button:hover,
@@ -144,6 +175,7 @@
 }
 
 .gpt-reader-icon-button:focus-visible,
+.gpt-reader-drag-region:focus-visible,
 .gpt-reader-heading:focus-visible,
 .gpt-reader-answer-title button:focus-visible,
 .gpt-reader-depths button:focus-visible,
@@ -162,12 +194,40 @@
 }
 
 .gpt-reader-settings {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
-  flex: 0 1 auto;
-  max-height: 55%;
-  min-height: 0;
+  background: rgb(var(--gpt-reader-surface-rgb) / var(--gpt-reader-surface-alpha));
+  border: 1px solid var(--gpt-reader-border);
+  border-radius: 8px;
+  max-height: min(55vh, 420px);
   overflow-y: auto;
-  padding: 10px 12px 12px;
+  padding: 10px;
+  pointer-events: auto;
+  position: absolute;
+  top: 42px;
+  left: 0;
+  width: min(100%, 360px);
+  z-index: 2;
+}
+
+#gpt-reader-root[data-expand-direction="left"] .gpt-reader-settings {
+  left: auto;
+  right: 0;
+}
+
+.gpt-reader-neighbor-counts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.gpt-reader-advanced {
+  border-top: 1px solid var(--gpt-reader-border);
+  margin-top: 10px;
+  padding-top: 8px;
+}
+
+.gpt-reader-advanced summary {
+  cursor: pointer;
+  font-size: 12px;
 }
 
 .gpt-reader-settings[hidden] {
@@ -185,7 +245,7 @@
   font-size: 13px;
   gap: 8px;
   justify-content: space-between;
-  margin: 0 0 10px;
+  margin: 0 0 8px;
 }
 
 .gpt-reader-switch input {
@@ -196,8 +256,21 @@
   color: #333;
   display: grid;
   font-size: 13px;
-  gap: 8px;
-  margin-bottom: 10px;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.gpt-reader-settings .gpt-reader-field small,
+.gpt-reader-settings .gpt-reader-more-settings {
+  color: var(--gpt-reader-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.gpt-reader-settings .gpt-reader-more-settings {
+  border-top: 1px solid var(--gpt-reader-border);
+  margin: 7px 0 0;
+  padding-top: 7px;
 }
 
 .gpt-reader-depths {
@@ -253,44 +326,29 @@
 }
 
 .gpt-reader-body {
-  display: grid;
+  display: flex;
   flex: 1 1 auto;
-  grid-template-columns: 12px 1fr;
   min-height: 0;
   overflow: hidden;
-  padding: 10px 8px 12px 10px;
-}
-
-.gpt-reader-rail {
-  background: #ececec;
-  border-radius: 999px;
-  margin: 4px auto 0;
-  position: relative;
-  width: 2px;
-}
-
-.gpt-reader-rail span {
-  background: #10a37f;
-  border-radius: 999px;
-  box-shadow: 0 0 0 4px rgba(16, 163, 127, 0.12);
-  display: block;
-  height: 7px;
-  left: 50%;
-  opacity: 0;
-  position: absolute;
-  top: -4px;
-  transform: translateY(0);
-  transition:
-    opacity 120ms ease,
-    transform 80ms ease;
-  width: 7px;
-  margin-left: -3.5px;
+  padding: 8px 0 0;
+  pointer-events: none;
 }
 
 [data-gpt-reader-list] {
+  align-self: start;
+  max-height: 100%;
   overflow: auto;
-  padding-right: 4px;
+  width: 100%;
+  pointer-events: auto;
   scrollbar-width: thin;
+}
+
+[data-gpt-reader-list-content] {
+  display: flow-root;
+}
+
+[data-gpt-reader-list].gpt-reader-list-scrollable {
+  overscroll-behavior-y: contain;
 }
 
 .gpt-reader-answer + .gpt-reader-answer {
@@ -298,31 +356,93 @@
 }
 
 .gpt-reader-answer {
-  border-left: 2px solid transparent;
+  background: rgb(var(--gpt-reader-surface-rgb) / var(--gpt-reader-surface-alpha));
+  border: 1px solid var(--gpt-reader-border);
+  border-left-width: 0;
+  border-right-width: 0;
   border-radius: 7px;
-  padding: 4px 4px 6px 6px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.05);
+  padding: 4px 5px 5px;
+}
+
+#gpt-reader-root[data-panel-side="right"] .gpt-reader-answer {
+  border-right-width: 3px;
+}
+
+#gpt-reader-root[data-panel-side="left"] .gpt-reader-answer {
+  border-left-width: 3px;
 }
 
 .gpt-reader-answer.is-current {
-  background: rgba(16, 163, 127, 0.045);
-  border-left-color: #10a37f;
+  background:
+    linear-gradient(
+      rgb(16 163 127 / calc(var(--gpt-reader-surface-alpha) * 0.13)),
+      rgb(16 163 127 / calc(var(--gpt-reader-surface-alpha) * 0.13))
+    ),
+    rgb(var(--gpt-reader-surface-rgb) / var(--gpt-reader-surface-alpha));
+  border-color: rgba(11, 139, 108, 0.58);
+  box-shadow: 0 3px 14px rgba(0, 91, 69, 0.12);
+}
+
+#gpt-reader-root[data-panel-side="right"] .gpt-reader-answer.is-current {
+  border-right-color: #0b8b6c;
+}
+
+#gpt-reader-root[data-panel-side="left"] .gpt-reader-answer.is-current {
+  border-left-color: #0b8b6c;
 }
 
 .gpt-reader-answer:not(.is-current) {
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  border-top-color: var(--gpt-reader-border);
+}
+
+.gpt-reader-reveal,
+.gpt-reader-reveal-collapse {
+  appearance: none;
+  background: rgb(var(--gpt-reader-surface-rgb) / var(--gpt-reader-surface-alpha));
+  border: 1px solid var(--gpt-reader-border);
+  border-radius: 999px;
+  color: var(--gpt-reader-muted);
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  font-size: 11px;
+  margin: 6px auto;
+  min-height: 28px;
+  padding: 3px 12px;
+}
+
+.gpt-reader-reveal:hover,
+.gpt-reader-reveal-collapse:hover {
+  color: var(--gpt-reader-active-text);
+  border-color: #10a37f;
+}
+
+.gpt-reader-reveal:focus-visible,
+.gpt-reader-reveal-collapse:focus-visible,
+.gpt-reader-advanced summary:focus-visible {
+  outline: 2px solid #0c8f70;
+  outline-offset: 2px;
+}
+
+.gpt-reader-answer-empty {
+  color: var(--gpt-reader-muted);
+  font-size: 12px;
+  margin: 0;
+  padding: 5px 7px;
 }
 
 .gpt-reader-answer-title {
   align-items: center;
-  background: #f7f7f7;
+  background: transparent;
   border-radius: 6px;
   color: var(--gpt-reader-subtle);
   display: flex;
   font-size: 11px;
   gap: 6px;
   justify-content: space-between;
-  margin: 0 0 4px;
-  padding: 4px 7px;
+  margin: 0 0 2px;
+  padding: 4px 5px;
 }
 
 .gpt-reader-answer-title button {
@@ -330,7 +450,7 @@
   background: transparent;
   color: inherit;
   display: inline-flex;
-  flex: 1;
+  flex: 0 0 auto;
   font-size: inherit;
   gap: 5px;
   min-width: 0;
@@ -338,14 +458,46 @@
   text-align: left;
 }
 
-.gpt-reader-answer-title button:disabled {
-  cursor: default;
+.gpt-reader-answer-title [data-gpt-reader-answer-toggle] {
+  min-height: 28px;
+  border-radius: 4px;
 }
 
-.gpt-reader-answer-title button span:last-child {
+.gpt-reader-answer-title .gpt-reader-answer-prompt {
+  flex: 1 1 auto;
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-height: 28px;
+  border-radius: 4px;
+}
+
+.gpt-reader-answer-title button:not(:disabled):hover {
+  color: var(--gpt-reader-active-text);
+  background: var(--gpt-reader-active-bg);
+}
+
+.gpt-reader-answer-title button:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.gpt-reader-answer-time {
+  color: #0c7159;
+  flex: 0 0 auto;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.gpt-reader-answer-time-fallback {
+  color: var(--gpt-reader-subtle);
+  font-weight: 650;
+}
+
+.gpt-reader-answer-time[hidden],
+.gpt-reader-answer-time-fallback[hidden] {
+  display: none;
 }
 
 .gpt-reader-answer-title.is-collapsed {
@@ -353,8 +505,34 @@
 }
 
 .gpt-reader-answer-title.is-collapsed:hover {
-  background: #eeeeee;
-  color: #333;
+  background: transparent;
+  color: var(--gpt-reader-text);
+}
+
+.gpt-reader-prompt-preview {
+  background: #fff;
+  border: 1px solid var(--gpt-reader-border);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.16);
+  color: var(--gpt-reader-text);
+  font-size: 13px;
+  line-height: 1.55;
+  max-height: min(420px, 55vh);
+  min-width: min(220px, calc(100vw - 16px));
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 14px;
+  pointer-events: auto;
+  position: fixed;
+  scrollbar-width: thin;
+  white-space: pre-wrap;
+  width: max-content;
+  z-index: 2147483002;
+}
+
+.gpt-reader-prompt-preview[hidden] {
+  display: none;
 }
 
 .gpt-reader-answer-caret {
@@ -371,17 +549,8 @@
 }
 
 .gpt-reader-answer.is-current .gpt-reader-answer-title {
-  background: rgba(16, 163, 127, 0.1);
+  background: transparent;
   color: #0f7f64;
-}
-
-.gpt-reader-answer-title em {
-  background: rgba(16, 163, 127, 0.1);
-  border-radius: 999px;
-  color: #0f7f64;
-  font-style: normal;
-  font-weight: 650;
-  padding: 1px 6px;
 }
 
 .gpt-reader-heading {
@@ -435,9 +604,16 @@
 
 .gpt-reader-heading.is-active {
   background: var(--gpt-reader-active-bg);
-  box-shadow: inset 2px 0 0 #0c8f70;
   color: var(--gpt-reader-active-text);
   font-weight: 650;
+}
+
+#gpt-reader-root[data-panel-side="left"] .gpt-reader-heading.is-active {
+  box-shadow: inset 2px 0 0 #0c8f70;
+}
+
+#gpt-reader-root[data-panel-side="right"] .gpt-reader-heading.is-active {
+  box-shadow: inset -2px 0 0 #0c8f70;
 }
 
 .gpt-reader-heading:disabled {
@@ -446,12 +622,14 @@
 }
 
 .gpt-reader-jump-status {
-  background: rgba(180, 35, 24, 0.09);
+  background: rgb(var(--gpt-reader-surface-rgb) / var(--gpt-reader-surface-alpha));
+  border-radius: 6px;
   color: #9f2018;
   font-size: 12px;
   line-height: 1.4;
   margin: 0;
   padding: 6px 10px;
+  pointer-events: auto;
 }
 
 .gpt-reader-jump-status[hidden] {
@@ -459,6 +637,9 @@
 }
 
 .gpt-reader-empty {
+  background: rgb(var(--gpt-reader-surface-rgb) / var(--gpt-reader-surface-alpha));
+  border: 1px solid var(--gpt-reader-border);
+  border-radius: 7px;
   padding: 8px 6px 12px;
 }
 
@@ -499,6 +680,66 @@
   position: absolute;
   inset: 0 auto auto 0;
   width: 32px;
+}
+
+#gpt-reader-root.is-ultra-narrow:not(.is-collapsed) .gpt-reader-body,
+#gpt-reader-root.is-ultra-narrow:not(.is-collapsed) .gpt-reader-resize-height-handle {
+  display: none;
+}
+
+#gpt-reader-root.is-ultra-narrow:not(.is-collapsed) .gpt-reader-collapsed-rail {
+  display: block;
+  width: 24px;
+  z-index: 1;
+}
+
+#gpt-reader-root[data-expand-direction="left"].is-ultra-narrow:not(.is-collapsed) .gpt-reader-collapsed-rail {
+  left: 8px;
+}
+
+#gpt-reader-root.is-ultra-narrow:not(.is-collapsed) .gpt-reader-resize-handle {
+  height: min(calc(100% - 44px), var(--gpt-reader-list-height, 200px));
+  z-index: 2;
+}
+
+#gpt-reader-root.is-ultra-narrow:not(.is-collapsed) .gpt-reader-header {
+  max-width: none;
+  opacity: 0;
+  position: absolute;
+  top: 0;
+  visibility: hidden;
+  width: max-content;
+  z-index: 4;
+}
+
+#gpt-reader-root.is-ultra-narrow[data-panel-side="left"] .gpt-reader-header {
+  left: 0;
+  right: auto;
+}
+
+#gpt-reader-root.is-ultra-narrow[data-panel-side="right"] .gpt-reader-header {
+  left: auto;
+  right: 0;
+}
+
+#gpt-reader-root.is-ultra-narrow:not(.is-collapsed):is(:hover, :focus-within, .is-settings-open) .gpt-reader-header {
+  opacity: 1;
+  visibility: visible;
+}
+
+#gpt-reader-root.is-ultra-narrow .gpt-reader-settings {
+  max-width: calc(100vw - 16px);
+  width: 336px;
+}
+
+#gpt-reader-root.is-ultra-narrow[data-panel-side="right"] .gpt-reader-settings {
+  left: auto;
+  right: 0;
+}
+
+#gpt-reader-root.is-ultra-narrow[data-panel-side="left"] .gpt-reader-settings {
+  left: 0;
+  right: auto;
 }
 
 .gpt-reader-collapsed-rail:focus-visible {
@@ -571,11 +812,13 @@
 }
 
 .gpt-reader-resize-handle {
-  bottom: 0;
+  bottom: auto;
   cursor: ew-resize;
+  height: min(calc(100% - 44px), var(--gpt-reader-list-height, 200px));
   position: absolute;
+  pointer-events: auto;
   right: -4px;
-  top: 0;
+  top: 44px;
   width: 8px;
 }
 
@@ -587,12 +830,12 @@
 .gpt-reader-resize-handle::after {
   background: rgba(16, 163, 127, 0.28);
   border-radius: 999px;
-  bottom: 14px;
+  bottom: 6px;
   content: "";
   opacity: 0;
   position: absolute;
   right: 3px;
-  top: 14px;
+  top: 6px;
   transition: opacity 120ms ease;
   width: 2px;
 }
@@ -603,6 +846,7 @@
 }
 
 .gpt-reader-resize-handle:hover::after,
+#gpt-reader-root:focus-within .gpt-reader-resize-handle::after,
 #gpt-reader-root.is-resizing .gpt-reader-resize-handle::after {
   opacity: 1;
 }
@@ -611,9 +855,10 @@
   bottom: -4px;
   cursor: ns-resize;
   height: 8px;
-  left: 14px;
+  left: calc(50% - 26px);
   position: absolute;
-  right: 14px;
+  pointer-events: auto;
+  width: 52px;
 }
 
 .gpt-reader-resize-height-handle::after {
@@ -622,14 +867,15 @@
   bottom: 3px;
   content: "";
   height: 2px;
-  left: 12px;
+  left: 8px;
   opacity: 0;
   position: absolute;
-  right: 12px;
+  right: 8px;
   transition: opacity 120ms ease;
 }
 
 .gpt-reader-resize-height-handle:hover::after,
+#gpt-reader-root:focus-within .gpt-reader-resize-height-handle::after,
 #gpt-reader-root.is-resizing-height .gpt-reader-resize-height-handle::after {
   opacity: 1;
 }
@@ -644,6 +890,10 @@
   opacity: 0;
   pointer-events: none;
   transform: translateX(-12px);
+}
+
+#gpt-reader-root.is-collapsed .gpt-reader-panel * {
+  pointer-events: none;
 }
 
 #gpt-reader-root[data-expand-direction="left"].is-collapsed .gpt-reader-panel {
@@ -689,15 +939,22 @@
 
 html.dark #gpt-reader-root,
 html[data-theme="dark"] #gpt-reader-root {
-  --gpt-reader-surface: rgba(35, 35, 35, 0.94);
+  --gpt-reader-surface-rgb: 35 35 35;
+  --gpt-reader-surface-alpha: 0.94;
   --gpt-reader-text: #f0f0f0;
   --gpt-reader-muted: #d0d0d0;
   --gpt-reader-subtle: #b6b6b6;
   --gpt-reader-border: rgba(255, 255, 255, 0.18);
-  --gpt-reader-hover: #3a3a3a;
-  --gpt-reader-active-bg: rgba(16, 163, 127, 0.28);
+  --gpt-reader-hover: rgb(255 255 255 / calc(var(--gpt-reader-surface-alpha) * 0.1));
+  --gpt-reader-active-bg: rgb(16 163 127 / calc(var(--gpt-reader-surface-alpha) * 0.28));
   --gpt-reader-active-text: #d9fff4;
   color-scheme: dark;
+}
+
+html.dark #gpt-reader-root .gpt-reader-prompt-preview,
+html[data-theme="dark"] #gpt-reader-root .gpt-reader-prompt-preview {
+  background: #262626;
+  border-color: rgb(255 255 255 / 0.2);
 }
 
 html.dark #gpt-reader-root .gpt-reader-header,
@@ -707,8 +964,6 @@ html[data-theme="dark"] #gpt-reader-root .gpt-reader-settings {
   border-color: var(--gpt-reader-border);
 }
 
-html.dark #gpt-reader-root .gpt-reader-answer-title,
-html[data-theme="dark"] #gpt-reader-root .gpt-reader-answer-title,
 html.dark #gpt-reader-root .gpt-reader-depths,
 html[data-theme="dark"] #gpt-reader-root .gpt-reader-depths,
 html.dark #gpt-reader-root .gpt-reader-field input,
@@ -716,6 +971,12 @@ html[data-theme="dark"] #gpt-reader-root .gpt-reader-field input,
 html.dark #gpt-reader-root .gpt-reader-field select,
 html[data-theme="dark"] #gpt-reader-root .gpt-reader-field select {
   background: #303030;
+  color: var(--gpt-reader-text);
+}
+
+html.dark #gpt-reader-root .gpt-reader-answer-title,
+html[data-theme="dark"] #gpt-reader-root .gpt-reader-answer-title {
+  background: transparent;
   color: var(--gpt-reader-text);
 }
 
@@ -730,8 +991,34 @@ html[data-theme="dark"] #gpt-reader-root .gpt-reader-switch {
 
 html.dark #gpt-reader-root .gpt-reader-answer.is-current .gpt-reader-answer-title,
 html[data-theme="dark"] #gpt-reader-root .gpt-reader-answer.is-current .gpt-reader-answer-title {
-  background: rgba(16, 163, 127, 0.19);
+  background: transparent;
   color: #d9fff4;
+}
+
+html.dark #gpt-reader-root .gpt-reader-answer.is-current,
+html[data-theme="dark"] #gpt-reader-root .gpt-reader-answer.is-current {
+  background:
+    linear-gradient(
+      rgb(16 163 127 / calc(var(--gpt-reader-surface-alpha) * 0.2)),
+      rgb(16 163 127 / calc(var(--gpt-reader-surface-alpha) * 0.2))
+    ),
+    rgb(var(--gpt-reader-surface-rgb) / var(--gpt-reader-surface-alpha));
+  border-color: rgba(100, 225, 190, 0.56);
+}
+
+html.dark #gpt-reader-root[data-panel-side="right"] .gpt-reader-answer.is-current,
+html[data-theme="dark"] #gpt-reader-root[data-panel-side="right"] .gpt-reader-answer.is-current {
+  border-right-color: #64e1be;
+}
+
+html.dark #gpt-reader-root[data-panel-side="left"] .gpt-reader-answer.is-current,
+html[data-theme="dark"] #gpt-reader-root[data-panel-side="left"] .gpt-reader-answer.is-current {
+  border-left-color: #64e1be;
+}
+
+html.dark #gpt-reader-root .gpt-reader-answer-time,
+html[data-theme="dark"] #gpt-reader-root .gpt-reader-answer-time {
+  color: #b9f5e1;
 }
 
 html.dark #gpt-reader-root .gpt-reader-heading.is-active,

@@ -1,4 +1,5 @@
 import type { HeadingDepth, TocSettings } from "./settings";
+import { getMessageId } from "./chatgpt-dom";
 
 export type HeadingInfo = {
   id: string;
@@ -46,7 +47,8 @@ const hasLayoutBox = (element: HTMLElement): boolean => {
 };
 
 export const isVisibleHeading = (element: HTMLElement): boolean => {
-  if (element.hidden || element.getAttribute("aria-hidden") === "true") {
+  if (element.hidden || element.getAttribute("aria-hidden") === "true" ||
+    element.hasAttribute("data-conversation-role")) {
     return false;
   }
 
@@ -68,7 +70,7 @@ export const isVisibleHeading = (element: HTMLElement): boolean => {
 };
 
 export const ensureAnswerId = (element: Element): string => {
-  const messageId = element.getAttribute("data-message-id")?.trim();
+  const messageId = getMessageId(element);
   let id: string;
   if (messageId) {
     id = `gpt-reader-answer-${encodeURIComponent(messageId)}`;
